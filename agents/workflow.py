@@ -7,6 +7,6 @@ class SQLWorkflow:
         self.executor = QueryExecutorAgent(db_path)
         self.reasoning = ReasoningAgent(self.executor)
 
-    def run(self, sql_query: str):
-        return self.reasoning.execute_query(sql_query)
+    def run(self, sql_query: str, schema_context:str = None):
+        return self.reasoning.execute_query(sql_query, schema_context or "")
 

@@ -65,7 +65,7 @@ def test_sql_generation():
             print(f"Confidence: {sql_result.confidence:.0%}")
             
             # Execute query
-            result = workflow.run(sql_result.sql)
+            result = workflow.run(sql_result.sql, schema_context=json.dumps(schema))
             print(f"Result rows: {len(result.data)}")
             if result.data:
                 print(f"Sample result: {result.data[0]}")

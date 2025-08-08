@@ -58,7 +58,19 @@ def test_final_system():
         
         # Execute query
         try:
-            result = workflow.run(generated_sql)
+            # Get schema for error repair
+            with sqlite3.connect("data/product_sales.db") as conn:
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(product_sales)")
+                columns_info = cursor.fetchall()
+                schema = {
+                    "tables": {
+                        "product_sales": {
+                            "columns": [{"name": col[1], "type": col[2]} for col in columns_info]
+                        }
+                    }
+                }
+            result = workflow.run(generated_sql, schema_context=json.dumps(schema))
             print(f"✅ Query execution: PASSED ({len(result.data)} rows)")
             
             if result.data:

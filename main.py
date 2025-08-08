@@ -81,7 +81,7 @@ def main():
             print(f"Confidence: {sql_query.confidence:.0%}")
             
             # Step 2: Execute query
-            result = workflow.run(sql_query.sql)
+            result = workflow.run(sql_query.sql, schema_context=json.dumps(schema))
             print("Execution successful. First row:", result.data[0])
             
         except Exception as e:
