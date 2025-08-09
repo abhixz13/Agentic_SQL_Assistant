@@ -107,4 +107,45 @@ python3 main.py
 
 ---
 
+## End-to-End Flow: User Query Lifecycle
+```mermaid
+flowchart TD
+  A["User enters query"] --> B["Gradio UI: process_natural_language_query()"]
+  B --> C["Reset token tracker"]
+  B --> D["Extract schema (SQLite introspection)"]
+  D --> E["Schema context (JSON)"]
+  E --> F["LLM: Intent parsing"]
+  F --> G["Token totals updated"]
+  F --> H["Structured intent (action, entity, params)"]
+  H --> I["SQLGeneratorAgent.generate_sql()"]
+  I --> J["Build schema_context + prompts"]
+  J --> K["LLM: Generate SQL (JSON: SQLQuery)"]
+  K --> L["Token totals updated"]
+  K --> M["Validate & optimize SQL"]
+  M --> N{"Valid against schema?"}
+  N -- "No" --> O["Fix SQL (syntax/schema)"]
+  O --> M
+  N -- "Yes" --> P["SQL candidate"]
+  P --> Q["QueryExecutorAgent.execute()"]
+  Q --> R{"Execution error?"}
+  R -- "No" --> S["Results + executed SQL (SQLResult.sql)"]
+  R -- "Yes" --> T["ReasoningAgent: classify + repair"]
+  T --> U["LLM: Repair SQL with schema context"]
+  U --> V["Token totals updated"]
+  U --> W["Re-execute SQL"]
+  W --> X{"Execution error?"}
+  X -- "No" --> S
+  X -- "Yes" --> Y["Fail or escalate"]
+  S --> Z["EXPLAIN QUERY PLAN (on executed SQL)"]
+  S --> AA["VisualizationAgent: infer axes + chart"]
+  Z --> AB["Assemble explanation (intent, assessment, tokens, exec, plan)"]
+  AA --> AC["Return DataFrame + Figure + Explanation"]
+  AB --> AC
+  G -.-> AD["Displayed in UI: prompt, completion, total"]
+  L -.-> AD
+  V -.-> AD
+```
+
+---
+
 *Last Updated: August 3, 2025* 

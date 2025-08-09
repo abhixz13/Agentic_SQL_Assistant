@@ -18,6 +18,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 from .schemas import SQLQuery, SQLGenerationRequest
+from utils.token_tracker import record_openai_usage_from_response
 
 from dotenv import load_dotenv
 import os
@@ -100,92 +101,105 @@ class SQLGeneratorAgent:
         system_msg = {
             "role": "system",
             "content": (
-                "You are an expert SQLite query generator. "
-                "NEVER invent tables or columns. "
-                "ALWAYS return STRICT JSON, no markdown, no code fences, no prose."
+                "You are an expert SQL generator for various SQLite schemas. "
+                "Follow these rules strictly: \n"
+                "1) Use ONLY table and column names that appear in the provided schema context. \n"
+                "2) Do NOT invent, paraphrase, or modify names. Use exact spelling. \n"
+                "3) Choose the correct table(s) based on the intent and the schema. If the intent's entity does not exist, infer the best table(s) from the schema; never use names outside the schema. \n"
+                "4) Validate the query logically (e.g., GROUP BY when using aggregates with non-aggregated columns). \n"
+                "5) SQLite dialect only. \n"
+                "6) ALWAYS return STRICT JSON only (no prose, no markdown, no code fences)."
             )
         }
 
-        user_prompt = f"""
-        DATABASE SCHEMA (only use names listed here):
-        {schema_context}
+        # Break the prompt into parts
+        prompt_parts = [
+            f"DATABASE SCHEMA (only use names listed here):\n{schema_context}\n\n",
+            f"STRUCTURED INTENT:\n- action: {request.action}\n- entity: {request.entity}\n",
+            f"- params: {json.dumps(request.params, ensure_ascii=False)}\n\n",
+            """OUTPUT FORMAT (STRICT JSON):
+            {
+            "sql": "<SQL>",
+            "query_type": "SELECT|INSERT|UPDATE|DELETE",
+            "table_name": "<primary table>",
+            "columns": ["<selected>", "..."],
+            "conditions": {},
+            "confidence": <float between 0.0 and 1.0 indicating how likely the SQL is correct given the schema>,
+            "metadata": {
+                "estimated_rows": "low|medium|high",
+                "complexity": "simple|medium|complex",
+                "notes": ""
+            }
+            }
+            \n\n""",
+            """RULES:
+            - Use only tables/columns that appear in the schema above.
+            - Do not guess names. If a referenced table/column is not in the schema, select alternatives only from the schema that align with the intent and columns mentioned in params.
+            - For aggregation: if SELECT mixes aggregates and non-aggregates, include GROUP BY for all non-aggregated columns.
+            - For "top N" or ranking: include ORDER BY <metric> DESC and LIMIT N.
+            - Prefer numeric columns for SUM/AVG; use COUNT(*) for counts.
+            - SQLite dialect only.
+            - Reflect the chosen primary table in "table_name". If different from intent.entity due to schema mismatch, place a short note in metadata.notes explaining the choice.
+            - Confidence scoring guidance:
+              * 0.85–1.00 when table and all columns exactly match the schema and logic is straightforward.
+              * 0.60–0.80 when there is minor ambiguity resolved using schema hints but still conforms.
+              * 0.10–0.50 when unsure or when making heuristic choices among multiple plausible tables.
+              * 0.00 only if you cannot produce a valid SQL for the provided schema.
+            - Temporal handling: Never output placeholders like 'last quarter start date'. Always convert natural-language time ranges to concrete SQLite date expressions using date()/strftime(). Prefer half-open ranges [start, next_start) to avoid off-by-one errors.
+              * Last month: order_date >= date('now','start of month','-1 month') AND order_date < date('now','start of month')
+              * This year: order_date >= date('now','start of year') AND order_date < date('now','start of year','+1 year')
+              * Last quarter (previous 3 full months): order_date >= date('now','start of month','-3 months') AND order_date < date('now','start of month')
+            \n\n""",
+            """FEW-SHOT EXAMPLES:
 
-        STRUCTURED INTENT:
-        - action: {request.action}
-        - entity: {request.entity}
-        - params: {json.dumps(request.params, ensure_ascii=False)}
+            Example of invalid table (do NOT do this):
+            SELECT * FROM products;  -- if 'products' is not in schema
 
-        OUTPUT FORMAT (STRICT JSON):
-        {{
-        "sql": "<SQL>",
-        "query_type": "SELECT|INSERT|UPDATE|DELETE",
-        "table_name": "<primary table>",
-        "columns": ["<selected>", "..."],
-        "conditions": {{}},
-        "confidence": 0.0,
-        "metadata": {{
-            "estimated_rows": "low|medium|high",
-            "complexity": "simple|medium|complex",
-            "notes": ""
-        }}
-        }}
+            Example of valid selection based on schema:
+            SELECT region, SUM(total_price) AS total_price FROM product_sales GROUP BY region;
 
-        RULES:
-        - Use only tables/columns that appear in the schema above.
-        - For aggregation: if SELECT mixes aggregates and non-aggregates, include GROUP BY for all non-aggregated columns.
-        - For "top N" or ranking: include ORDER BY <metric> DESC and LIMIT N.
-        - Prefer numeric columns for SUM/AVG; use COUNT(*) for counts.
-        - SQLite dialect only.
-        - The primary table to query is exactly: {request.entity}. Use it in FROM.
-        - NEVER use a column name as a table name. If {request.entity} is present in the schema, FROM must be {request.entity}.
-        - For “last quarter”, default to the last 3 FULL months in SQLite:
-        order_date >= date('now','start of month','-3 months') AND order_date < date('now','start of month')
-        - For average order value, use: AVG(1.0 * total_price / NULLIF(quantity, 0))
-        - For “top N …”, include ORDER BY <metric> DESC and LIMIT N.
+            Example conversion of temporal phrase (last quarter):
+            SELECT region, AVG(price_per_unit) AS avg_price
+            FROM product_sales
+            WHERE order_date >= date('now','start of month','-3 months')
+              AND order_date <  date('now','start of month')
+            GROUP BY region;
 
-        FEW-SHOT EXAMPLES:
+            Example: Top 5 customers by total sales (with ordering and LIMIT):
+            SELECT customer_id, SUM(total_price) AS total_sales
+            FROM product_sales
+            GROUP BY customer_id
+            ORDER BY total_sales DESC
+            LIMIT 5;
 
-        Input:
-        {"action":"aggregate","entity":"product_sales","params":{"function":"avg","column":"total_price/quantity","group_by":"region","filters":{"sales_channel":"Online"},"limit":3}}
-        Output:
-        {
-        "sql": "SELECT region, AVG(1.0 * total_price / NULLIF(quantity,0)) AS avg_order_value FROM product_sales WHERE sales_channel='Online' AND order_date >= date('now','start of month','-3 months') AND order_date < date('now','start of month') GROUP BY region ORDER BY avg_order_value DESC LIMIT 3",
-        "query_type": "SELECT",
-        "table_name": "product_sales",
-        "columns": ["region","total_price","quantity","sales_channel","order_date"],
-        "conditions": {"sales_channel":"Online"},
-        "confidence": 0.93,
-        "metadata": {"estimated_rows":"low","complexity":"medium","notes":""}
-        }
+            Example: Aggregation with filter threshold (exclude low values):
+            SELECT region, SUM(total_price) AS total_sales
+            FROM product_sales
+            WHERE total_price > 100
+            GROUP BY region;
 
-        Input:
-        {{"action":"aggregate","entity":"product_sales","params":{{"function":"sum","column":"total_price","group_by":"region"}}}}
-        Output:
-        {{
-        "sql": "SELECT region, SUM(total_price) AS total_price_sum FROM product_sales GROUP BY region",
-        "query_type": "SELECT",
-        "table_name": "product_sales",
-        "columns": ["region","total_price"],
-        "conditions": {{}},
-        "confidence": 0.93,
-        "metadata": {{"estimated_rows":"low","complexity":"simple","notes":""}}
-        }}
+            Example: Distinct counts (unique customers per region):
+            SELECT region, COUNT(DISTINCT customer_id) AS unique_customers
+            FROM product_sales
+            GROUP BY region;
 
-        Input:
-        {{"action":"aggregate","entity":"product_sales","params":{{"function":"sum","column":"total_price","group_by":"customer_id","limit":5}}}}
-        Output:
-        {{
-        "sql": "SELECT customer_id, SUM(total_price) AS total_price_sum FROM product_sales GROUP BY customer_id ORDER BY total_price_sum DESC LIMIT 5",
-        "query_type": "SELECT",
-        "table_name": "product_sales",
-        "columns": ["customer_id","total_price"],
-        "conditions": {{}},
-        "confidence": 0.92,
-        "metadata": {{"estimated_rows":"low","complexity":"medium","notes":""}}
-        }}
+            Example: Handle nulls when averaging numeric columns:
+            SELECT region, AVG(price_per_unit) AS avg_unit_price
+            FROM product_sales
+            WHERE price_per_unit IS NOT NULL
+            GROUP BY region;
 
-        Now produce the STRICT JSON for the INTENT above.
-        """
+            Now produce the STRICT JSON for the INTENT above.
+            """
+        ]
+
+        user_prompt = "".join(prompt_parts)
+
+        # Lightweight debug for prompt sizes (avoid logging full schema)
+        try:
+            logger.debug(f"LLM prompt sizes - schema:{len(schema_context)} intent:{len(json.dumps(request.params))} total:{len(user_prompt)}")
+        except Exception:
+            pass
 
         def _extract_json(text: str) -> str:
             # Strip code fences if any
@@ -204,6 +218,8 @@ class SQLGeneratorAgent:
                     temperature=0.0 if attempt == 0 else 0.1,
                     max_tokens=400
                 )
+                # Record token usage
+                record_openai_usage_from_response(resp)
                 raw = resp.choices[0].message.content
                 data = json.loads(_extract_json(raw))
                 # Pydantic will validate shape; if columns/fields missing, raise ValueError
@@ -284,11 +300,15 @@ class SQLGeneratorAgent:
             SQLQuery: Validated and optimized query
         """
         try:
+            original_sql = sql_query.sql
+            original_confidence = float(sql_query.confidence) if sql_query.confidence is not None else 0.0
+            any_fixes_applied = False
             # Basic SQL validation
             if not self._validate_sql_syntax(sql_query.sql):
                 logger.warning("SQL syntax validation failed, attempting to fix")
                 sql_query.sql = self._fix_sql_syntax(sql_query.sql)
                 sql_query.confidence *= 0.8  # Reduce confidence for fixed queries
+                any_fixes_applied = True
             
             # Schema validation
             if not self._validate_against_schema(sql_query, schema_info):
@@ -296,13 +316,22 @@ class SQLGeneratorAgent:
                 fixed = self._fix_schema_issues(sql_query, schema_info)
                 sql_query.sql = fixed
                 sql_query.confidence = max(0.0, float(sql_query.confidence) * 0.7)  # Reduce confidence for schema fixes
+                any_fixes_applied = True
             
             # Query optimization
             optimized_sql = self._optimize_query(sql_query.sql)
             if optimized_sql != sql_query.sql:
                 sql_query.sql = optimized_sql
                 sql_query.metadata["optimized"] = True
-            
+ 
+            # If no fixes were needed and validation passed, ensure confidence isn't unrealistically low
+            if not any_fixes_applied and self._validate_against_schema(sql_query, schema_info):
+                if original_confidence <= 0.05 or float(sql_query.confidence) <= 0.05:
+                    sql_query.confidence = 0.9
+                    notes = sql_query.metadata.get("notes", "") if isinstance(sql_query.metadata, dict) else ""
+                    add_note = "Confidence raised because SQL fully matched schema with no fixes."
+                    sql_query.metadata["notes"] = (notes + ("; " if notes else "") + add_note)
+
             return sql_query
             
         except Exception as e:
@@ -364,9 +393,6 @@ class SQLGeneratorAgent:
         """
         tables = set(schema_info.get("tables", {}).keys())
         if sql_query.table_name not in tables:
-            return False
-        
-        if sql_query.table_name != sql_query.entity:
             return False
 
         # Collect set of valid columns for the table

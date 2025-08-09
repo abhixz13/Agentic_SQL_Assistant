@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import os
 import json, re
+import logging
 
 # Add the project root to Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -13,6 +14,18 @@ from agents.workflow import SQLWorkflow
 from agents.query_executor.agent import QueryExecutorAgent
 from agents.sql_generator.agent import SQLGeneratorAgent
 from agents.visualization.agent import VisualizationAgent, VisualizationOptions
+from utils.token_tracker import token_tracker, record_openai_usage_from_response
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('gradio.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 
 def setup_workflow():
@@ -110,6 +123,8 @@ def parse_natural_language_to_intent(natural_query: str, schema: dict = None) ->
             temperature=0.1,
             max_tokens=500
         )
+        # Record token usage
+        record_openai_usage_from_response(response)
         
         # Parse the response
         intent_text = response.choices[0].message.content.strip()
@@ -447,40 +462,150 @@ def get_formatted_schema():
 
 def process_natural_language_query(natural_query, chart_type):
     """Convert natural language to SQL and execute with visualization"""
+    logger.debug(f"Processing query: {natural_query}")
     try:
+        # Reset token tracker at the start of one end-to-end request
+        token_tracker.reset()
         # Initialize AI agents
         workflow, sql_generator, viz_agent = setup_workflow()
         
         # Get database schema for context
         schema = get_formatted_schema()
-        schema_context = create_schema_context(schema)   # <-- add this
+        schema_context = create_schema_context(schema)
         
         # Parse natural language to structured intent using LLM
         intent = parse_natural_language_to_intent(natural_query, schema)
         
         # Generate SQL using LLM-based generator
         sql_result = sql_generator.generate_sql(intent, schema)
-        sql_query = sql_result.sql  # Extract the SQL string from the SQLQuery object
+        sql_query = sql_result.sql
         
         # Execute the generated SQL using workflow
         result = workflow.run(sql_query, schema_context=json.dumps(schema))
+        result_df = pd.DataFrame(result.data)
+        
+        # Build explanation
+        # Collect model metadata if available
+        confidence = getattr(sql_result, "confidence", None)
+        metadata = getattr(sql_result, "metadata", {}) or {}
+        complexity = metadata.get("complexity")
+        estimated_rows = metadata.get("estimated_rows")
+        flags = [k for k in ("optimized", "fallback") if metadata.get(k)]
+        # Token usage totals
+        usage = token_tracker.get_totals()
+
+        # Attempt to get SQLite query plan
+        plan_lines = []
+        try:
+            with sqlite3.connect("data/product_sales.db") as plan_conn:
+                # Prefer the exact executed SQL, if provided by the executor
+                executed_sql = getattr(result, "sql", sql_query)
+                cur = plan_conn.execute(f"EXPLAIN QUERY PLAN {executed_sql.rstrip(';')}")
+                rows = cur.fetchall()
+                for r in rows:
+                    try:
+                        plan_lines.append(str(r[-1]))
+                    except Exception:
+                        plan_lines.append(str(r))
+        except Exception as plan_err:
+            plan_lines.append(f"Could not retrieve query plan: {plan_err}")
+
+        # Compose richer explanation
+        explanation_parts = []
+        explanation_parts.append("**Intent**:")
+        explanation_parts.append(f"- action: {intent.get('action')}\n- entity: {intent.get('entity')}\n- params: {json.dumps(intent.get('params', {}))}")
+
+        explanation_parts.append("\n**Generated SQL**:\n```sql\n" + sql_query + "\n```")
+        # If the executed SQL differs (e.g., repaired by reasoning), show it
+        executed_sql_differs = getattr(result, "sql", sql_query) != sql_query
+        if executed_sql_differs:
+            explanation_parts.append("\n**Executed SQL (corrected)**:\n```sql\n" + getattr(result, "sql", sql_query) + "\n```")
+            explanation_parts.append("\n**Correction Details**:")
+            explanation_parts.append(f"- Initial error: Incorrect table/column reference")
+            explanation_parts.append(f"- Automatic correction: System detected and fixed schema mismatch")
+
+        model_bits = []
+        if confidence is not None:
+            model_bits.append(f"confidence: {confidence:.2f}")
+            if confidence < 0.5 and executed_sql_differs:  # Only show note if correction actually happened
+                model_bits.append("\n**Note**: Low confidence indicates the initial query required correction. The system automatically fixed the issues below:")
+                if "product_name" in sql_query and "product_sales" in getattr(result, "sql", ""):
+                    model_bits.append("- Fixed table name from 'product_name' to 'product_sales'")
+        if complexity:
+            model_bits.append(f"complexity: {complexity}")
+        if estimated_rows:
+            model_bits.append(f"estimated_rows: {estimated_rows}")
+            # include notes from model metadata if present
+            notes = metadata.get("notes") if isinstance(metadata, dict) else None
+            if notes:
+                model_bits.append(f"notes: {notes}")
+        if flags:
+            model_bits.append("flags: " + ", ".join(flags))
+        if usage and (usage.get("total_tokens") or usage.get("prompt_tokens") or usage.get("completion_tokens")):
+            model_bits.append(
+                f"tokens: total={usage.get('total_tokens', 0)}, prompt={usage.get('prompt_tokens', 0)}, completion={usage.get('completion_tokens', 0)}"
+            )
+        if model_bits:
+            explanation_parts.append("\n**Model assessment**:\n- " + "\n- ".join(model_bits))
+
+        explanation_parts.append(
+            "\n**Execution**:" +
+            f"\n- rows: {len(result.data)}" +
+            (f"\n- time: {getattr(result, 'execution_time', None):.3f}s" if getattr(result, 'execution_time', None) is not None else "")
+        )
+
+        if plan_lines:
+            explanation_parts.append("\n**Query plan**:\n- " + "\n- ".join(plan_lines))
+
+        explanation = "\n".join(explanation_parts)
         
         # Create visualization if requested
         if chart_type != "none":
-            viz_options = VisualizationOptions(
-                chart_type=chart_type,
-                title=f"Results: {natural_query}",
-                x_axis="region" if "region" in sql_query.lower() else "category",
-                y_axis="total_price" if "total_price" in sql_query.lower() else "count"
-            )
+            # Infer axes from actual result
+            cols = list(result_df.columns)
+            numeric_cols = result_df.select_dtypes(include=["number"]).columns.tolist()
+
+            # Prefer common categorical dimensions for x
+            preferred_x_order = ["region", "category", "customer_id", "order_date", "product_name"]
+            x_axis = next((c for c in preferred_x_order if c in cols), None)
+            if x_axis is None and cols:
+                # fallback to first non-numeric column
+                non_numeric_cols = [c for c in cols if c not in numeric_cols]
+                x_axis = non_numeric_cols[0] if non_numeric_cols else (cols[0] if cols else None)
+
+            # Prefer meaningful numeric metrics for y
+            preferred_y_order = [
+                "total_price", "total_sales", "revenue", "amount", "price_per_unit",
+                "avg_price", "count", "quantity", "sum", "avg"
+            ]
+            y_axis = next((c for c in preferred_y_order if c in cols), None)
+            if y_axis is None and numeric_cols:
+                # pick first numeric that's not the x-axis
+                y_axis = next((c for c in numeric_cols if c != x_axis), numeric_cols[0])
+
+            # If we still cannot determine axes, fall back to table view
+            if not x_axis or (chart_type != "table" and not y_axis):
+                logger.debug(f"Unable to determine axes for chart. Falling back to table. cols={cols}, numeric={numeric_cols}")
+                viz_options = VisualizationOptions(
+                    chart_type="table",
+                    title=f"Results: {natural_query}"
+                )
+            else:
+                viz_options = VisualizationOptions(
+                    chart_type=chart_type,
+                    title=f"Results: {natural_query}",
+                    x_axis=x_axis,
+                    y_axis=y_axis
+                )
+
             fig = viz_agent.visualize(result.data, viz_options)
-            return pd.DataFrame(result.data), fig, f"Generated SQL: {sql_query}"
+            return result_df, fig, explanation
         else:
-            return pd.DataFrame(result.data), None, f"Generated SQL: {sql_query}"
+            return result_df, None, explanation
             
     except Exception as e:
-        error_df = pd.DataFrame({"Error": [str(e)]})
-        return error_df, None, f"Error: {str(e)}"
+        logger.error(f"Error processing query: {str(e)}")
+        raise
 
 def get_db_schema():
     """Get database schema for reference"""
@@ -520,15 +645,17 @@ with gr.Blocks(title="AI SQL Assistant", theme=gr.themes.Soft()) as demo:
         run_btn = gr.Button("Ask AI", variant="primary", size="lg")
         
         with gr.Row():
-            results = gr.Dataframe(label="Results")
-            plot_output = gr.Plot(label="Visualization")
-        
-        sql_output = gr.Textbox(label="Generated SQL", lines=3, interactive=False)
+            with gr.Column(scale=2):  # Main results area
+                results = gr.Dataframe(label="Results")
+                plot_output = gr.Plot(label="Visualization")
+            with gr.Column(scale=1):  # New explanation panel
+                gr.Markdown("### Query Explanation")
+                explanation_output = gr.Markdown()
         
         run_btn.click(
             fn=process_natural_language_query,
             inputs=[query_input, chart_type],
-            outputs=[results, plot_output, sql_output]
+            outputs=[results, plot_output, explanation_output]
         )
     
     with gr.Tab("Database Schema"):

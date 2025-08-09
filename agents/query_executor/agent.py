@@ -25,6 +25,7 @@ class SQLResult(BaseModel):
     data: List[Dict]
     execution_time: float
     schema_used: Dict
+    sql: str = ""
 
 class QueryExecutorAgent:
     """
@@ -51,22 +52,26 @@ class QueryExecutorAgent:
         retry=lambda e: isinstance(e, sqlite3.OperationalError) and "locked" in str(e)
     )
     def execute(self, query: str) -> SQLResult:
-        """Execute SQL query with error handling"""
+        """Execute SQL query with error handling."""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Executing SQL: {query}")
+        
         start_time = time.time()
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(query)
                 results = [dict(row) for row in cursor.fetchall()]
+                logger.debug(f"Query executed successfully. Rows returned: {len(results)}")
                 return SQLResult(
                     data=results,
                     execution_time=time.time() - start_time,
-                    schema_used=self._get_table_schema(query, conn)
+                    schema_used=self._get_table_schema(query, conn),
+                    sql=query
                 )
         except sqlite3.Error as e:
-            error = self._create_execution_error(e, query)
-            if error.error_type == "schema" and self.error_handler:
-                self.error_handler(error)
+            logger.error(f"SQL execution failed: {str(e)}")
             raise
 
     def _create_execution_error(self, error: sqlite3.Error, query: str) -> ExecutionError:

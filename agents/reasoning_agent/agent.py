@@ -160,6 +160,7 @@ class ReasoningAgent:
         try:
             from openai import OpenAI
             client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            from utils.token_tracker import record_openai_usage_from_response
         except Exception:
             return None
 
@@ -176,6 +177,8 @@ class ReasoningAgent:
                 temperature=0.0,
                 max_tokens=400
             )
+            # Record token usage
+            record_openai_usage_from_response(r)
             fixed = r.choices[0].message.content.strip()
             # Simple guard: ensure it looks like SQL
             if re.match(r"^\s*(select|with|update|delete|insert)\b", fixed, flags=re.I):
