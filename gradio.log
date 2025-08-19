@@ -1,2 +1,224 @@
 /Users/abhijeetsinghx2/SQL_Assistant_2/venv/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
   warnings.warn(
+2025-08-18 15:49:42,229 - INFO - HTTP Request: GET https://api.gradio.app/pkg-version "HTTP/1.1 200 OK"
+2025-08-18 15:49:42,261 - INFO - HTTP Request: GET http://localhost:7861/startup-events "HTTP/1.1 200 OK"
+2025-08-18 15:49:42,269 - INFO - HTTP Request: HEAD http://localhost:7861/ "HTTP/1.1 200 OK"
+2025-08-18 15:49:42,422 - INFO - HTTP Request: GET https://checkip.amazonaws.com/ "HTTP/1.1 200 "
+2025-08-18 15:49:42,615 - INFO - HTTP Request: GET https://checkip.amazonaws.com/ "HTTP/1.1 200 "
+2025-08-18 16:16:38,725 - INFO - FewShotExampleGenerator initialized with model: gpt-4o-mini
+2025-08-18 16:16:38,730 - INFO - SQLPlannerAgent initialized with OpenAI GPT-4o-mini
+2025-08-18 16:16:38,730 - INFO - SQLValidatorAgent initialized with SQLite policy
+2025-08-18 16:16:38,730 - INFO - SQLGeneratorAgent initialized with Planner → Validator → Generator flow
+2025-08-18 16:16:38,731 - INFO - 📊 Using standard schema (no semantic enhancement)
+2025-08-18 16:16:40,429 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 16:16:40,433 - INFO - Starting Planner → Validator → Generator flow for: aggregate
+2025-08-18 16:16:40,433 - INFO - Step 1: Creating SQL execution plan...
+2025-08-18 16:16:40,433 - INFO - 📊 Using basic schema for planning
+2025-08-18 16:16:40,433 - INFO - Creating SQL plan for action: aggregate, entity: product_sales
+2025-08-18 16:16:40,434 - INFO - 📊 Using basic schema context for SQL planning
+2025-08-18 16:16:42,160 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 16:16:42,174 - ERROR - Error in LLM plan generation: 1 validation error for SQLPlan
+time
+  Input should be a valid dictionary [type=dict_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.11/v/dict_type
+2025-08-18 16:16:42,174 - ERROR - Error creating SQL plan: 1 validation error for SQLPlan
+time
+  Input should be a valid dictionary [type=dict_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.11/v/dict_type
+2025-08-18 16:16:42,175 - WARNING - Using fallback plan generation
+2025-08-18 16:16:42,175 - INFO - Step 2: Validating and normalizing plan...
+2025-08-18 16:16:42,175 - INFO - 📊 Validating SQL plan with basic schema
+2025-08-18 16:16:42,175 - INFO - Validation complete. OK: True, Issues: 0
+2025-08-18 16:16:42,176 - INFO - Step 3: Generating SQL from validated plan...
+2025-08-18 16:16:42,176 - INFO - 📊 Generating SQL with basic schema
+2025-08-18 16:16:42,177 - INFO - 📝 No cached examples found, generating new few-shot examples...
+2025-08-18 16:16:42,179 - INFO - 🧠 Using combined semantic + basic schema for few-shot example generation
+2025-08-18 16:17:01,427 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 16:17:01,441 - INFO - Generated 5 examples, saved to data/few_shot_examples/examples_b905499f.json
+2025-08-18 16:17:03,062 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 16:17:03,088 - INFO - ✅ Planner → Validator → Generator flow completed successfully
+2025-08-18 16:18:14,474 - INFO - FewShotExampleGenerator initialized with model: gpt-4o-mini
+2025-08-18 16:18:14,479 - INFO - SQLPlannerAgent initialized with OpenAI GPT-4o-mini
+2025-08-18 16:18:14,479 - INFO - SQLValidatorAgent initialized with SQLite policy
+2025-08-18 16:18:14,479 - INFO - SQLGeneratorAgent initialized with Planner → Validator → Generator flow
+2025-08-18 16:18:14,480 - INFO - 📊 Using standard schema (no semantic enhancement)
+2025-08-18 16:18:15,663 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 16:18:15,665 - INFO - Starting Planner → Validator → Generator flow for: aggregate
+2025-08-18 16:18:15,665 - INFO - Step 1: Creating SQL execution plan...
+2025-08-18 16:18:15,665 - INFO - 📊 Using basic schema for planning
+2025-08-18 16:18:15,665 - INFO - Creating SQL plan for action: aggregate, entity: product_sales
+2025-08-18 16:18:15,665 - INFO - 📊 Using basic schema context for SQL planning
+2025-08-18 16:18:17,876 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 16:18:17,879 - ERROR - Error in LLM plan generation: 1 validation error for SQLPlan
+time
+  Input should be a valid dictionary [type=dict_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.11/v/dict_type
+2025-08-18 16:18:17,880 - ERROR - Error creating SQL plan: 1 validation error for SQLPlan
+time
+  Input should be a valid dictionary [type=dict_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.11/v/dict_type
+2025-08-18 16:18:17,881 - WARNING - Using fallback plan generation
+2025-08-18 16:18:17,882 - INFO - Step 2: Validating and normalizing plan...
+2025-08-18 16:18:17,882 - INFO - 📊 Validating SQL plan with basic schema
+2025-08-18 16:18:17,882 - INFO - Validation complete. OK: True, Issues: 0
+2025-08-18 16:18:17,882 - INFO - Step 3: Generating SQL from validated plan...
+2025-08-18 16:18:17,882 - INFO - 📊 Generating SQL with basic schema
+2025-08-18 16:18:17,883 - INFO - ✅ Using cached examples from examples_b905499f.json
+2025-08-18 16:18:19,450 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 16:18:19,453 - INFO - ✅ Planner → Validator → Generator flow completed successfully
+2025-08-18 16:20:48,087 - INFO - FewShotExampleGenerator initialized with model: gpt-4o-mini
+2025-08-18 16:20:48,092 - INFO - SQLPlannerAgent initialized with OpenAI GPT-4o-mini
+2025-08-18 16:20:48,092 - INFO - SQLValidatorAgent initialized with SQLite policy
+2025-08-18 16:20:48,092 - INFO - SQLGeneratorAgent initialized with Planner → Validator → Generator flow
+2025-08-18 16:20:48,094 - INFO - 📊 Using standard schema (no semantic enhancement)
+2025-08-18 16:20:50,128 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 16:20:50,152 - INFO - Starting Planner → Validator → Generator flow for: select
+2025-08-18 16:20:50,153 - INFO - Step 1: Creating SQL execution plan...
+2025-08-18 16:20:50,153 - INFO - 📊 Using basic schema for planning
+2025-08-18 16:20:50,153 - INFO - Creating SQL plan for action: select, entity: product_sales
+2025-08-18 16:20:50,153 - INFO - 📊 Using basic schema context for SQL planning
+2025-08-18 16:20:55,325 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 16:20:55,327 - ERROR - Error in LLM plan generation: 1 validation error for SQLPlan
+time
+  Input should be a valid dictionary [type=dict_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.11/v/dict_type
+2025-08-18 16:20:55,327 - ERROR - Error creating SQL plan: 1 validation error for SQLPlan
+time
+  Input should be a valid dictionary [type=dict_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.11/v/dict_type
+2025-08-18 16:20:55,327 - WARNING - Using fallback plan generation
+2025-08-18 16:20:55,328 - INFO - Step 2: Validating and normalizing plan...
+2025-08-18 16:20:55,328 - INFO - 📊 Validating SQL plan with basic schema
+2025-08-18 16:20:55,329 - INFO - Validation complete. OK: False, Issues: 1
+2025-08-18 16:20:55,330 - WARNING - Plan validation failed with 1 errors
+2025-08-18 16:20:55,330 - WARNING -   - PARSE_ERROR: Cannot parse expression 'result': Unexpected token: OP (*)
+2025-08-18 16:20:55,330 - INFO - Step 3: Generating SQL from validated plan...
+2025-08-18 16:20:55,330 - INFO - 📊 Generating SQL with basic schema
+2025-08-18 16:20:55,332 - INFO - ✅ Using cached examples from examples_b905499f.json
+2025-08-18 16:20:57,449 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 16:20:57,452 - INFO - ✅ Planner → Validator → Generator flow completed successfully
+2025-08-18 17:42:18,637 - INFO - FewShotExampleGenerator initialized with model: gpt-4o-mini
+2025-08-18 17:42:18,641 - INFO - SQLPlannerAgent initialized with OpenAI GPT-4o-mini
+2025-08-18 17:42:18,641 - INFO - SQLValidatorAgent initialized with SQLite policy
+2025-08-18 17:42:18,641 - INFO - SQLGeneratorAgent initialized with Planner → Validator → Generator flow
+2025-08-18 17:42:18,642 - INFO - 📊 Using standard schema (no semantic enhancement)
+2025-08-18 17:42:19,958 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 17:42:19,961 - INFO - Starting Planner → Validator → Generator flow for: aggregate
+2025-08-18 17:42:19,961 - INFO - Step 1: Creating SQL execution plan...
+2025-08-18 17:42:19,961 - INFO - 📊 Using basic schema for planning
+2025-08-18 17:42:19,961 - INFO - Creating SQL plan for action: aggregate, entity: product_sales
+2025-08-18 17:42:19,961 - INFO - 📊 Using basic schema context for SQL planning
+2025-08-18 17:42:22,256 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 17:42:22,259 - ERROR - Error in LLM plan generation: 1 validation error for SQLPlan
+time
+  Input should be a valid dictionary [type=dict_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.11/v/dict_type
+2025-08-18 17:42:22,259 - ERROR - Error creating SQL plan: 1 validation error for SQLPlan
+time
+  Input should be a valid dictionary [type=dict_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.11/v/dict_type
+2025-08-18 17:42:22,259 - WARNING - Using fallback plan generation
+2025-08-18 17:42:22,259 - INFO - Step 2: Validating and normalizing plan...
+2025-08-18 17:42:22,259 - INFO - 📊 Validating SQL plan with basic schema
+2025-08-18 17:42:22,259 - INFO - Validation complete. OK: True, Issues: 0
+2025-08-18 17:42:22,259 - INFO - Step 3: Generating SQL from validated plan...
+2025-08-18 17:42:22,259 - INFO - 📊 Generating SQL with basic schema
+2025-08-18 17:42:22,261 - INFO - ✅ Using cached examples from examples_b905499f.json
+2025-08-18 17:42:23,795 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 17:42:23,797 - WARNING - Schema validation failed, attempting to fix
+2025-08-18 17:42:23,801 - INFO - ✅ Planner → Validator → Generator flow completed successfully
+2025-08-18 17:42:23,802 - ERROR - SQL execution failed: no such table: product_name
+2025-08-18 17:42:24,494 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 17:44:06,766 - INFO - FewShotExampleGenerator initialized with model: gpt-4o-mini
+2025-08-18 17:44:06,771 - INFO - SQLPlannerAgent initialized with OpenAI GPT-4o-mini
+2025-08-18 17:44:06,771 - INFO - SQLValidatorAgent initialized with SQLite policy
+2025-08-18 17:44:06,771 - INFO - SQLGeneratorAgent initialized with Planner → Validator → Generator flow
+2025-08-18 17:44:06,772 - INFO - 📊 Using standard schema (no semantic enhancement)
+2025-08-18 17:44:08,272 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 17:44:08,280 - INFO - Starting Planner → Validator → Generator flow for: select
+2025-08-18 17:44:08,280 - INFO - Step 1: Creating SQL execution plan...
+2025-08-18 17:44:08,280 - INFO - 📊 Using basic schema for planning
+2025-08-18 17:44:08,280 - INFO - Creating SQL plan for action: select, entity: product_sales
+2025-08-18 17:44:08,280 - INFO - 📊 Using basic schema context for SQL planning
+2025-08-18 17:44:10,821 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 17:44:10,823 - ERROR - Error in LLM plan generation: 1 validation error for SQLPlan
+time
+  Input should be a valid dictionary [type=dict_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.11/v/dict_type
+2025-08-18 17:44:10,823 - ERROR - Error creating SQL plan: 1 validation error for SQLPlan
+time
+  Input should be a valid dictionary [type=dict_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.11/v/dict_type
+2025-08-18 17:44:10,823 - WARNING - Using fallback plan generation
+2025-08-18 17:44:10,823 - INFO - Step 2: Validating and normalizing plan...
+2025-08-18 17:44:10,823 - INFO - 📊 Validating SQL plan with basic schema
+2025-08-18 17:44:10,824 - INFO - Validation complete. OK: False, Issues: 1
+2025-08-18 17:44:10,824 - WARNING - Plan validation failed with 1 errors
+2025-08-18 17:44:10,824 - WARNING -   - PARSE_ERROR: Cannot parse expression 'result': Unexpected token: OP (*)
+2025-08-18 17:44:10,824 - INFO - Step 3: Generating SQL from validated plan...
+2025-08-18 17:44:10,824 - INFO - 📊 Generating SQL with basic schema
+2025-08-18 17:44:10,826 - INFO - ✅ Using cached examples from examples_b905499f.json
+2025-08-18 17:44:11,997 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 17:44:12,001 - INFO - ✅ Planner → Validator → Generator flow completed successfully
+2025-08-18 17:45:20,257 - INFO - FewShotExampleGenerator initialized with model: gpt-4o-mini
+2025-08-18 17:45:20,262 - INFO - SQLPlannerAgent initialized with OpenAI GPT-4o-mini
+2025-08-18 17:45:20,262 - INFO - SQLValidatorAgent initialized with SQLite policy
+2025-08-18 17:45:20,262 - INFO - SQLGeneratorAgent initialized with Planner → Validator → Generator flow
+2025-08-18 17:45:20,262 - INFO - 📊 Using standard schema (no semantic enhancement)
+2025-08-18 17:45:21,215 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 17:45:21,219 - INFO - Starting Planner → Validator → Generator flow for: top_n
+2025-08-18 17:45:21,219 - INFO - Step 1: Creating SQL execution plan...
+2025-08-18 17:45:21,219 - INFO - 📊 Using basic schema for planning
+2025-08-18 17:45:21,219 - INFO - Creating SQL plan for action: top_n, entity: product_sales
+2025-08-18 17:45:21,220 - INFO - 📊 Using basic schema context for SQL planning
+2025-08-18 17:45:23,582 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 17:45:23,585 - ERROR - Error in LLM plan generation: 1 validation error for SQLPlan
+time
+  Input should be a valid dictionary [type=dict_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.11/v/dict_type
+2025-08-18 17:45:23,585 - ERROR - Error creating SQL plan: 1 validation error for SQLPlan
+time
+  Input should be a valid dictionary [type=dict_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.11/v/dict_type
+2025-08-18 17:45:23,585 - WARNING - Using fallback plan generation
+2025-08-18 17:45:23,586 - INFO - Step 2: Validating and normalizing plan...
+2025-08-18 17:45:23,586 - INFO - 📊 Validating SQL plan with basic schema
+2025-08-18 17:45:23,586 - INFO - Validation complete. OK: False, Issues: 1
+2025-08-18 17:45:23,586 - WARNING - Plan validation failed with 1 errors
+2025-08-18 17:45:23,586 - WARNING -   - PARSE_ERROR: Cannot parse expression 'result': Unexpected token: OP (*)
+2025-08-18 17:45:23,587 - INFO - Step 3: Generating SQL from validated plan...
+2025-08-18 17:45:23,587 - INFO - 📊 Generating SQL with basic schema
+2025-08-18 17:45:23,589 - INFO - ✅ Using cached examples from examples_b905499f.json
+2025-08-18 17:45:25,310 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 17:45:25,311 - INFO - ✅ Planner → Validator → Generator flow completed successfully
+2025-08-18 17:45:59,227 - INFO - FewShotExampleGenerator initialized with model: gpt-4o-mini
+2025-08-18 17:45:59,232 - INFO - SQLPlannerAgent initialized with OpenAI GPT-4o-mini
+2025-08-18 17:45:59,232 - INFO - SQLValidatorAgent initialized with SQLite policy
+2025-08-18 17:45:59,232 - INFO - SQLGeneratorAgent initialized with Planner → Validator → Generator flow
+2025-08-18 17:45:59,233 - INFO - 📊 Using standard schema (no semantic enhancement)
+2025-08-18 17:46:00,266 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 17:46:00,272 - INFO - Starting Planner → Validator → Generator flow for: top_n
+2025-08-18 17:46:00,272 - INFO - Step 1: Creating SQL execution plan...
+2025-08-18 17:46:00,272 - INFO - 📊 Using basic schema for planning
+2025-08-18 17:46:00,272 - INFO - Creating SQL plan for action: top_n, entity: product_sales
+2025-08-18 17:46:00,272 - INFO - 📊 Using basic schema context for SQL planning
+2025-08-18 17:46:05,255 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 17:46:05,268 - ERROR - Error in LLM plan generation: 1 validation error for SQLPlan
+time
+  Input should be a valid dictionary [type=dict_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.11/v/dict_type
+2025-08-18 17:46:05,268 - ERROR - Error creating SQL plan: 1 validation error for SQLPlan
+time
+  Input should be a valid dictionary [type=dict_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.11/v/dict_type
+2025-08-18 17:46:05,268 - WARNING - Using fallback plan generation
+2025-08-18 17:46:05,268 - INFO - Step 2: Validating and normalizing plan...
+2025-08-18 17:46:05,269 - INFO - 📊 Validating SQL plan with basic schema
+2025-08-18 17:46:05,269 - INFO - Validation complete. OK: False, Issues: 1
+2025-08-18 17:46:05,269 - WARNING - Plan validation failed with 1 errors
+2025-08-18 17:46:05,269 - WARNING -   - PARSE_ERROR: Cannot parse expression 'result': Unexpected token: OP (*)
+2025-08-18 17:46:05,269 - INFO - Step 3: Generating SQL from validated plan...
+2025-08-18 17:46:05,269 - INFO - 📊 Generating SQL with basic schema
+2025-08-18 17:46:05,270 - INFO - ✅ Using cached examples from examples_b905499f.json
+2025-08-18 17:46:06,399 - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-18 17:46:06,402 - INFO - ✅ Planner → Validator → Generator flow completed successfully

@@ -18,6 +18,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 from .schemas import SQLQuery, SQLGenerationRequest
+from .few_shot_generator import FewShotExampleGenerator
+from .planner import SQLPlannerAgent
+from .validator import SQLValidatorAgent
 from utils.token_tracker import record_openai_usage_from_response
 
 from dotenv import load_dotenv
@@ -53,11 +56,14 @@ class SQLGeneratorAgent:
             raise ValueError("OpenAI API key not found in .env or arguments")
 
         self.model = "gpt-3.5-turbo"
-        logger.info("SQLGeneratorAgent initialized with OpenAI GPT-3.5-turbo")
+        self.few_shot_generator = FewShotExampleGenerator()
+        self.planner = SQLPlannerAgent(api_key)
+        self.validator = SQLValidatorAgent()
+        logger.info("SQLGeneratorAgent initialized with Planner → Validator → Generator flow")
     
     def generate_sql(self, intent_data: dict, schema_info: dict) -> SQLQuery:
         """
-        Generate SQL query from structured intent and schema information.
+        Generate SQL query using the Planner → Validator → Generator flow.
         
         Args:
             intent_data (dict): Structured intent from IntentParserAgent
@@ -67,26 +73,52 @@ class SQLGeneratorAgent:
             SQLQuery: Structured SQL query with metadata
         """
         try:
-            # Create generation request
-            request = SQLGenerationRequest(
-                action=intent_data["action"],
-                entity=intent_data["entity"],
-                params=intent_data["params"],
-                schema_info=schema_info
-            )
+            logger.info(f"Starting Planner → Validator → Generator flow for: {intent_data['action']}")
             
-            logger.info(f"Generating SQL for action: {request.action}, entity: {request.entity}")
+            # Step 1: PLANNER - Create DSL execution plan
+            logger.info("Step 1: Creating SQL execution plan...")
+            sql_plan = self.planner.create_plan(intent_data, schema_info)
+            plan_dict = sql_plan.model_dump()
             
-            # Generate SQL using LLM
-            sql_result = self._generate_with_llm(request)
+            # Step 2: VALIDATOR - Validate and normalize the plan
+            logger.info("Step 2: Validating and normalizing plan...")
+            normalized_plan, validation_report = self.validator.validate_plan(plan_dict, schema_info)
             
-            # Validate and optimize the generated SQL
+            # Check validation results
+            if not validation_report.ok:
+                logger.warning(f"Plan validation failed with {len(validation_report.errors())} errors")
+                for error in validation_report.errors():
+                    logger.warning(f"  - {error.code}: {error.message}")
+                # Continue with normalized plan even if there are warnings
+            
+            # Log validation summary
+            if validation_report.fixes():
+                logger.info(f"Applied {len(validation_report.fixes())} auto-fixes to plan")
+                for fix in validation_report.fixes():
+                    logger.info(f"  - {fix.code}: {fix.message}")
+            
+            # Step 3: GENERATOR - Convert validated plan to SQL
+            logger.info("Step 3: Generating SQL from validated plan...")
+            sql_result = self._generate_sql_from_plan(normalized_plan, schema_info, intent_data)
+            
+            # Add flow metadata
+            sql_result.metadata.update({
+                "planning_flow": "planner_validator_generator",
+                "plan_confidence": sql_plan.confidence,
+                "validation_ok": validation_report.ok,
+                "validation_issues": len(validation_report.issues),
+                "auto_fixes_applied": len(validation_report.fixes())
+            })
+            
+            # Final validation and optimization
             validated_sql = self._validate_and_optimize_sql(sql_result, schema_info)
             
+            logger.info("✅ Planner → Validator → Generator flow completed successfully")
             return validated_sql
             
         except Exception as e:
-            logger.error(f"Error generating SQL: {e}")
+            logger.error(f"Error in planning flow: {e}")
+            logger.info("Falling back to direct SQL generation")
             return self._fallback_sql_generation(intent_data, schema_info)
     
     def _generate_with_llm(self, request: SQLGenerationRequest) -> SQLQuery:
@@ -134,6 +166,7 @@ class SQLGeneratorAgent:
             \n\n""",
             """RULES:
             - Use only tables/columns that appear in the schema above.
+            - If a validated execution plan is provided, follow its expressions, grouping, and filtering guidance precisely.
             - Do not guess names. If a referenced table/column is not in the schema, select alternatives only from the schema that align with the intent and columns mentioned in params.
             - For aggregation: if SELECT mixes aggregates and non-aggregates, include GROUP BY for all non-aggregated columns.
             - For "top N" or ranking: include ORDER BY <metric> DESC and LIMIT N.
@@ -150,47 +183,11 @@ class SQLGeneratorAgent:
               * This year: order_date >= date('now','start of year') AND order_date < date('now','start of year','+1 year')
               * Last quarter (previous 3 full months): order_date >= date('now','start of month','-3 months') AND order_date < date('now','start of month')
             \n\n""",
-            """FEW-SHOT EXAMPLES:
-
-            Example of invalid table (do NOT do this):
-            SELECT * FROM products;  -- if 'products' is not in schema
-
-            Example of valid selection based on schema:
-            SELECT region, SUM(total_price) AS total_price FROM product_sales GROUP BY region;
-
-            Example conversion of temporal phrase (last quarter):
-            SELECT region, AVG(price_per_unit) AS avg_price
-            FROM product_sales
-            WHERE order_date >= date('now','start of month','-3 months')
-              AND order_date <  date('now','start of month')
-            GROUP BY region;
-
-            Example: Top 5 customers by total sales (with ordering and LIMIT):
-            SELECT customer_id, SUM(total_price) AS total_sales
-            FROM product_sales
-            GROUP BY customer_id
-            ORDER BY total_sales DESC
-            LIMIT 5;
-
-            Example: Aggregation with filter threshold (exclude low values):
-            SELECT region, SUM(total_price) AS total_sales
-            FROM product_sales
-            WHERE total_price > 100
-            GROUP BY region;
-
-            Example: Distinct counts (unique customers per region):
-            SELECT region, COUNT(DISTINCT customer_id) AS unique_customers
-            FROM product_sales
-            GROUP BY region;
-
-            Example: Handle nulls when averaging numeric columns:
-            SELECT region, AVG(price_per_unit) AS avg_unit_price
-            FROM product_sales
-            WHERE price_per_unit IS NOT NULL
-            GROUP BY region;
-
-            Now produce the STRICT JSON for the INTENT above.
-            """
+            self._get_dynamic_examples(request.schema_info, {
+                "action": request.action,
+                "entity": request.entity, 
+                "params": request.params
+            })
         ]
 
         user_prompt = "".join(prompt_parts)
@@ -287,6 +284,154 @@ class SQLGeneratorAgent:
             lines.append("")  # spacer
 
         return "\n".join(lines)
+
+    def _generate_sql_from_plan(self, normalized_plan: Dict[str, Any], schema_info: dict, intent_data: dict) -> SQLQuery:
+        """
+        Generate SQL from a validated and normalized plan.
+        
+        Args:
+            normalized_plan: Validated plan from validator
+            schema_info: Database schema information (may include semantic context)
+            intent_data: Original intent data
+            
+        Returns:
+            SQLQuery: Generated SQL with metadata
+        """
+        try:
+            # Include semantic context awareness
+            if schema_info.get("has_semantic"):
+                logger.info("🧠 Generating SQL with semantic schema context")
+            else:
+                logger.info("📊 Generating SQL with basic schema")
+            
+            # Create enhanced generation request with plan context
+            plan_context = self._format_plan_for_generation(normalized_plan)
+            
+            request = SQLGenerationRequest(
+                action=intent_data["action"],
+                entity=intent_data["entity"],
+                params=intent_data["params"],
+                schema_info=schema_info,
+                plan_context=plan_context
+            )
+            
+            # Generate SQL using LLM with plan guidance
+            sql_result = self._generate_with_llm(request)
+            
+            # Enhance confidence based on plan quality
+            if normalized_plan.get("confidence"):
+                # Combine plan confidence with generation confidence
+                plan_conf = float(normalized_plan["confidence"])
+                gen_conf = float(sql_result.confidence)
+                combined_conf = (plan_conf + gen_conf) / 2
+                sql_result.confidence = combined_conf
+            
+            # Add plan metadata
+            sql_result.metadata.update({
+                "used_plan": True,
+                "plan_expressions": list(normalized_plan.get("expressions", {}).keys()),
+                "plan_grouping": len(normalized_plan.get("group_by", [])) > 0,
+                "plan_filtering": len(normalized_plan.get("filters", [])) > 0,
+                "plan_time_ops": bool(normalized_plan.get("time", {}))
+            })
+            
+            return sql_result
+            
+        except Exception as e:
+            logger.error(f"Error generating SQL from plan: {e}")
+            # Fallback to traditional generation
+            return self._generate_with_llm(SQLGenerationRequest(
+                action=intent_data["action"],
+                entity=intent_data["entity"],
+                params=intent_data["params"],
+                schema_info=schema_info
+            ))
+    
+    def _format_plan_for_generation(self, normalized_plan: Dict[str, Any]) -> str:
+        """Convert normalized plan to context string for SQL generation."""
+        context_parts = []
+        
+        context_parts.append("=== VALIDATED SQL EXECUTION PLAN ===")
+        
+        # Expressions
+        expressions = normalized_plan.get("expressions", {})
+        if expressions:
+            context_parts.append("Required Expressions:")
+            for name, expr in expressions.items():
+                context_parts.append(f"  {name}: {expr}")
+        
+        # Grouping
+        group_by = normalized_plan.get("group_by", [])
+        if group_by:
+            context_parts.append(f"Group By: {', '.join(group_by)}")
+        
+        # Time operations
+        time_config = normalized_plan.get("time", {})
+        if time_config:
+            time_parts = []
+            if "col" in time_config:
+                time_parts.append(f"time_column={time_config['col']}")
+            if "grain" in time_config:
+                time_parts.append(f"grain={time_config['grain']}")
+            if "range" in time_config:
+                time_parts.append(f"range={time_config['range']}")
+            
+            if time_parts:
+                context_parts.append(f"Time Configuration: {', '.join(time_parts)}")
+        
+        # Filters
+        filters = normalized_plan.get("filters", [])
+        if filters:
+            context_parts.append("Required Filters:")
+            for f in filters:
+                context_parts.append(f"  {f.get('sql', '')}")
+        
+        # Notes
+        notes = normalized_plan.get("notes", [])
+        if notes:
+            context_parts.append("Planning Notes:")
+            for note in notes:
+                context_parts.append(f"  - {note}")
+        
+        context_parts.append("=== GENERATE SQL FOLLOWING THIS PLAN ===")
+        
+        return "\n".join(context_parts)
+
+    def _get_dynamic_examples(self, schema_info: dict, query_intent: dict = None) -> str:
+        """
+        Get dynamic few-shot examples based on schema and query intent.
+        
+        Args:
+            schema_info: Database schema information
+            query_intent: Current query intent for context-aware examples
+            
+        Returns:
+            Formatted examples string for prompt injection
+        """
+        try:
+            # Get examples for this schema with intent context
+            examples_data = self.few_shot_generator.get_examples_for_schema(schema_info, query_intent)
+            
+            # Format for prompt injection
+            formatted_examples = self.few_shot_generator.format_examples_for_prompt(examples_data)
+            
+            return f"""FEW-SHOT EXAMPLES:
+{formatted_examples}
+
+Now produce the STRICT JSON for the INTENT above.
+"""
+        except Exception as e:
+            logger.warning(f"Error loading dynamic examples, using fallback: {e}")
+            return """FEW-SHOT EXAMPLES:
+
+Example: Revenue by region
+SQL: SELECT region, SUM(total_price) AS total_revenue FROM product_sales GROUP BY region;
+
+Example: Top customers
+SQL: SELECT customer_id, SUM(total_price) as total FROM product_sales GROUP BY customer_id ORDER BY total DESC LIMIT 5;
+
+Now produce the STRICT JSON for the INTENT above.
+"""
 
     def _validate_and_optimize_sql(self, sql_query: SQLQuery, schema_info: dict) -> SQLQuery:
         """

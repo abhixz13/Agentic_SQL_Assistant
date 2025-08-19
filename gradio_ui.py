@@ -15,6 +15,7 @@ from agents.query_executor.agent import QueryExecutorAgent
 from agents.sql_generator.agent import SQLGeneratorAgent
 from agents.visualization.agent import VisualizationAgent, VisualizationOptions
 from utils.token_tracker import token_tracker, record_openai_usage_from_response
+from agents.schema_loader.semantic_schema import SemanticSchemaManager
 
 # Configure logging
 logging.basicConfig(
@@ -407,7 +408,34 @@ def create_fallback_intent(natural_query: str, schema: dict) -> dict:
     }
 
 def get_formatted_schema():
-    """Fetch complete and accurate schema metadata from the database."""
+    """Fetch complete schema with semantic enhancement if available."""
+    try:
+        # First try to load semantic schema from correct path
+        semantic_manager = SemanticSchemaManager("agents/schema_loader/config/semantic_schemas")
+        semantic_schema = semantic_manager.load_schema("product_sales_semantic.json")
+        
+        # Get standard schema structure
+        standard_schema = _get_standard_schema()
+        
+        if semantic_schema:
+            logger.info("✅ Using enhanced semantic schema for Planner → Validator → Generator")
+            # Enhanced schema with full semantic context
+            return {
+                **standard_schema,
+                "semantic_context": semantic_manager.get_enhanced_schema_context(semantic_schema),
+                "semantic_schema": semantic_schema,  # Full semantic schema object for agents
+                "has_semantic": True
+            }
+        else:
+            logger.info("📊 Using standard schema (no semantic enhancement)")
+            return {**standard_schema, "has_semantic": False, "semantic_schema": None}
+            
+    except Exception as e:
+        print(f"Schema Error: {str(e)}")
+        return {"tables": {}, "error": str(e), "has_semantic": False, "semantic_schema": None}
+
+def _get_standard_schema():
+    """Fetch basic schema metadata from the database."""
     try:
         with sqlite3.connect("data/product_sales.db") as conn:
             cursor = conn.cursor()
@@ -443,19 +471,24 @@ def get_formatted_schema():
                         "unique": bool(idx[2])
                     })
                 
+                # Get foreign keys
+                cursor.execute(f"PRAGMA foreign_key_list({table_name})")
+                foreign_keys = []
+                for fk in cursor.fetchall():
+                    foreign_keys.append({
+                        "column": fk[3],  # local column
+                        "references_table": fk[2],  # foreign table
+                        "references_column": fk[4]  # foreign column
+                    })
+                
                 schema["tables"][table_name] = {
                     "columns": columns,
-                    "indexes": indexes
+                    "indexes": indexes,
+                    "foreign_keys": foreign_keys
                 }
             
-            # Print schema to console for debugging
-            import json
-            print("\n===== ACTUAL DATABASE SCHEMA =====")
-            print(json.dumps(schema, indent=2))
-            print("=================================\n")
-            
             return schema
-            
+        
     except Exception as e:
         print(f"Schema Error: {str(e)}")
         return {"tables": {}, "error": str(e)}
@@ -481,7 +514,9 @@ def process_natural_language_query(natural_query, chart_type):
         sql_query = sql_result.sql
         
         # Execute the generated SQL using workflow
-        result = workflow.run(sql_query, schema_context=json.dumps(schema))
+        # Create a JSON-serializable version of schema for workflow
+        schema_for_workflow = {k: v for k, v in schema.items() if k != 'semantic_schema'}
+        result = workflow.run(sql_query, schema_context=json.dumps(schema_for_workflow))
         result_df = pd.DataFrame(result.data)
         
         # Build explanation
@@ -624,54 +659,370 @@ def get_db_schema():
     except Exception as e:
         return {"Error": str(e)}
 
-# Create the interface
-with gr.Blocks(title="AI SQL Assistant", theme=gr.themes.Soft()) as demo:
-    gr.Markdown("# 🤖 AI SQL Assistant")
-    gr.Markdown("Ask questions in natural language and let AI convert them to SQL!")
+# Custom CSS for modern styling
+custom_css = """
+.main-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.header-section {
+    text-align: center;
+    margin-bottom: 30px;
+    padding: 20px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 15px;
+    color: white;
+}
+
+.query-section {
+    background: white;
+    border-radius: 12px;
+    padding: 25px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    margin-bottom: 20px;
+}
+
+.results-section {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.example-card {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 15px;
+    margin: 10px 0;
+    border-left: 4px solid #667eea;
+}
+
+.schema-display {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 20px;
+    font-family: 'Monaco', 'Menlo', monospace;
+}
+
+.gradient-btn {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border: none;
+    border-radius: 8px;
+    color: white;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.gradient-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 12px rgba(102, 126, 234, 0.4);
+}
+"""
+
+# Create the interface with modern styling
+with gr.Blocks(
+    title="QueryGPT-style SQL Assistant", 
+    theme=gr.themes.Soft(),
+    css=custom_css
+) as demo:
     
-    with gr.Tab("Natural Language Query"):
-        with gr.Row():
-            query_input = gr.Textbox(
-                label="Ask your question", 
-                placeholder="e.g., Show me revenue by region",
-                lines=2
-            )
-            chart_type = gr.Dropdown(
-                choices=["none", "bar", "line", "pie", "table"],
-                value="bar",
-                label="Visualization"
-            )
-        
-        run_btn = gr.Button("Ask AI", variant="primary", size="lg")
-        
-        with gr.Row():
-            with gr.Column(scale=2):  # Main results area
-                results = gr.Dataframe(label="Results")
-                plot_output = gr.Plot(label="Visualization")
-            with gr.Column(scale=1):  # New explanation panel
-                gr.Markdown("### Query Explanation")
-                explanation_output = gr.Markdown()
-        
-        run_btn.click(
-            fn=process_natural_language_query,
-            inputs=[query_input, chart_type],
-            outputs=[results, plot_output, explanation_output]
+    # Header section
+    with gr.Column(elem_classes="header-section"):
+        gr.Markdown(
+            """
+            # 🚀 AI-Powered SQL Assistant
+            ### Transform natural language into SQL queries with AI
+            
+            Ask questions about your data in plain English and get instant SQL queries with visualizations
+            """,
+            elem_classes="header-text"
         )
     
-    with gr.Tab("Database Schema"):
-        gr.JSON(get_db_schema(), label="Available Tables and Columns")
+    # Main interface
+    with gr.Column(elem_classes="main-container"):
+        
+        # Query input section
+        with gr.Column(elem_classes="query-section"):
+            gr.Markdown("## 💬 Ask Your Question")
+            
+            with gr.Row():
+                with gr.Column(scale=4):
+                    query_input = gr.Textbox(
+                        label="",
+                        placeholder="What would you like to know? (e.g., 'Show me revenue by region' or 'Which customers bought the most?')",
+                        lines=3,
+                        elem_classes="query-input"
+                    )
+                with gr.Column(scale=1):
+                    chart_type = gr.Dropdown(
+                        choices=["bar", "line", "pie", "table", "none"],
+                        value="bar",
+                        label="📊 Visualization",
+                        elem_classes="chart-selector"
+                    )
+            
+            with gr.Row():
+                run_btn = gr.Button(
+                    "🔮 Generate SQL & Analyze", 
+                    variant="primary", 
+                    size="lg",
+                    elem_classes="gradient-btn"
+                )
+                clear_btn = gr.Button("🗑️ Clear", variant="secondary")
+        
+        # Results section
+        with gr.Column(elem_classes="results-section"):
+            gr.Markdown("## 📊 Results & Analysis")
+            
+            # SQL output section
+            with gr.Row():
+                with gr.Column(scale=1):
+                    gr.Markdown("### 🔍 Generated SQL")
+                    sql_output = gr.Code(
+                        label="",
+                        language="sql",
+                        lines=5,
+                        interactive=False
+                    )
+                with gr.Column(scale=1):
+                    gr.Markdown("### 📈 Token Usage & Performance")
+                    performance_output = gr.Markdown()
+            
+            # Data results and visualization
+            with gr.Row():
+                with gr.Column(scale=2):
+                    gr.Markdown("### 📋 Query Results")
+                    results = gr.Dataframe(
+                        label="",
+                        wrap=True,
+                        height=400
+                    )
+                with gr.Column(scale=2):
+                    gr.Markdown("### 📊 Visualization")
+                    plot_output = gr.Plot(label="")
+            
+            # Explanation section
+            with gr.Row():
+                with gr.Column():
+                    gr.Markdown("### 🧠 AI Analysis & Explanation")
+                    explanation_output = gr.Markdown(elem_classes="explanation-panel")
     
-    with gr.Tab("Example Questions"):
+    # Sidebar with examples and schema
+    with gr.Accordion("💡 Example Questions", open=False):
+        gr.Markdown(
+            """
+            <div class="example-card">
+            <strong>Revenue Analysis:</strong><br>
+            • "Show me revenue by region"<br>
+            • "What's the total sales for each category?"<br>
+            • "Which payment method generates the most revenue?"
+            </div>
+            
+            <div class="example-card">
+            <strong>Customer Insights:</strong><br>
+            • "Top 5 customers by total purchases"<br>
+            • "How many orders per customer segment?"<br>
+            • "Which customers haven't ordered recently?"
+            </div>
+            
+            <div class="example-card">
+            <strong>Time-based Analysis:</strong><br>
+            • "Revenue trend over time"<br>
+            • "Monthly sales comparison"<br>
+            • "Best performing months"
+            </div>
+            """
+        )
+        
         gr.Examples(
             examples=[
                 ["Show me revenue by region", "bar"],
-                ["How many orders per category", "pie"],
-                ["Top 3 customers by region", "bar"],
-                ["Sales by payment method", "bar"],
-                ["Revenue trend over time", "line"]
+                ["How many orders per category?", "pie"],
+                ["Top 5 customers by total purchases", "bar"],
+                ["Revenue trend over time", "line"],
+                ["Which payment method is most popular?", "pie"],
+                ["Average order value by sales channel", "bar"]
             ],
-            inputs=[query_input, chart_type]
+            inputs=[query_input, chart_type],
+            label="Click to try these examples:"
         )
+    
+    with gr.Accordion("🗃️ Database Schema", open=False):
+        with gr.Column(elem_classes="schema-display"):
+            schema_output = gr.JSON(
+                get_db_schema(), 
+                label="Available Tables and Columns"
+            )
+    
+    with gr.Accordion("🧠 Semantic Schema Editor", open=False):
+        gr.Markdown(
+            """
+            ### Enhance AI Understanding with Business Context
+            Add business descriptions and context for each column to improve SQL generation accuracy.
+            """
+        )
+        
+        # Load current semantic schema
+        semantic_manager = SemanticSchemaManager("agents/schema_loader/config/semantic_schemas")
+        current_schema = semantic_manager.load_schema("product_sales_semantic.json")
+        
+        if current_schema:
+            # Create editable interface for each table
+            for table in current_schema.tables:
+                with gr.Accordion(f"📊 Table: {table.name}", open=False):
+                    gr.Markdown(f"**Purpose:** {table.business_purpose}")
+                    
+                    # Create input fields for each column
+                    column_inputs = {}
+                    
+                    for col in table.columns:
+                        with gr.Group():
+                            gr.Markdown(f"**Column: {col.name}** ({col.data_type})")
+                            
+                            # Create unique component names for this column
+                            col_key = f"{table.name}_{col.name}"
+                            
+                            description_input = gr.Textbox(
+                                label="Description",
+                                value=col.description,
+                                placeholder="Enter a clear description of this column...",
+                                lines=2
+                            )
+                            
+                            business_meaning_input = gr.Textbox(
+                                label="Business Meaning",
+                                value=col.business_meaning,
+                                placeholder="Explain what this column means in business terms...",
+                                lines=2
+                            )
+                            
+                            unit_input = gr.Textbox(
+                                label="Unit (Optional)",
+                                value=col.unit or "",
+                                placeholder="e.g., USD, percentage, count, etc."
+                            )
+                            
+                            calculation_note_input = gr.Textbox(
+                                label="Calculation Note (Optional)",
+                                value=col.calculation_note or "",
+                                placeholder="How is this value calculated?",
+                                lines=2
+                            )
+                            
+                            # Store inputs for later use
+                            column_inputs[col_key] = {
+                                'description': description_input,
+                                'business_meaning': business_meaning_input,
+                                'unit': unit_input,
+                                'calculation_note': calculation_note_input,
+                                'original_col': col
+                            }
+            
+            # Save button and status
+            with gr.Row():
+                save_semantic_btn = gr.Button(
+                    "💾 Save Semantic Schema", 
+                    variant="primary",
+                    elem_classes="gradient-btn"
+                )
+                semantic_status = gr.Markdown("Ready to save changes...")
+            
+            def save_semantic_schema(*inputs):
+                """Save the updated semantic schema"""
+                try:
+                    # Reconstruct the schema with updated values
+                    input_index = 0
+                    for table in current_schema.tables:
+                        for col in table.columns:
+                            col_key = f"{table.name}_{col.name}"
+                            
+                            # Update column with new values (4 inputs per column)
+                            col.description = inputs[input_index] if inputs[input_index] else col.description
+                            col.business_meaning = inputs[input_index + 1] if inputs[input_index + 1] else col.business_meaning
+                            col.unit = inputs[input_index + 2] if inputs[input_index + 2] else None
+                            col.calculation_note = inputs[input_index + 3] if inputs[input_index + 3] else None
+                            
+                            input_index += 4
+                    
+                    # Save the updated schema
+                    semantic_manager.save_schema(current_schema, "product_sales_semantic.json")
+                    
+                    return "✅ Semantic schema saved successfully! The AI will now use your enhanced descriptions."
+                    
+                except Exception as e:
+                    return f"❌ Error saving semantic schema: {str(e)}"
+            
+            # Collect all inputs for the save function
+            all_inputs = []
+            for table in current_schema.tables:
+                for col in table.columns:
+                    col_key = f"{table.name}_{col.name}"
+                    if col_key in column_inputs:
+                        all_inputs.extend([
+                            column_inputs[col_key]['description'],
+                            column_inputs[col_key]['business_meaning'],
+                            column_inputs[col_key]['unit'],
+                            column_inputs[col_key]['calculation_note']
+                        ])
+            
+            # Connect save button
+            save_semantic_btn.click(
+                fn=save_semantic_schema,
+                inputs=all_inputs,
+                outputs=semantic_status
+            )
+        
+        else:
+            gr.Markdown("⚠️ No semantic schema found. Please create one first.")
+    
+    # Event handlers
+    def process_query_with_sql_display(natural_query, chart_type):
+        """Enhanced processing that separates SQL display from results"""
+        try:
+            result_df, fig, explanation = process_natural_language_query(natural_query, chart_type)
+            
+            # Extract SQL from explanation
+            sql_match = re.search(r'```sql\n(.*?)\n```', explanation, re.DOTALL)
+            sql_code = sql_match.group(1) if sql_match else "No SQL generated"
+            
+            # Extract performance info
+            token_match = re.search(r'tokens: (.*?)\n', explanation)
+            time_match = re.search(r'time: (.*?)s', explanation)
+            confidence_match = re.search(r'confidence: (.*?)\n', explanation)
+            
+            performance_info = "### Performance Metrics\n"
+            if token_match:
+                performance_info += f"**🎯 Token Usage:** {token_match.group(1)}\n"
+            if time_match:
+                performance_info += f"**⚡ Execution Time:** {time_match.group(1)}s\n"
+            if confidence_match:
+                performance_info += f"**🎯 Confidence:** {confidence_match.group(1)}\n"
+            else:
+                performance_info += "**🎯 Confidence:** N/A\n"
+            
+            return result_df, fig, explanation, sql_code, performance_info
+            
+        except Exception as e:
+            error_msg = f"Error: {str(e)}"
+            return None, None, error_msg, error_msg, error_msg
+        
+    def clear_all():
+        """Clear all outputs"""
+        return "", "", None, None, "", "", ""
+    
+    # Connect event handlers
+    run_btn.click(
+        fn=process_query_with_sql_display,
+        inputs=[query_input, chart_type],
+        outputs=[results, plot_output, explanation_output, sql_output, performance_output]
+    )
+    
+    clear_btn.click(
+        fn=clear_all,
+        outputs=[query_input, chart_type, results, plot_output, explanation_output, sql_output, performance_output]
+    )
 
 if __name__ == "__main__":
     demo.launch(
