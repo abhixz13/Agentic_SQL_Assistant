@@ -257,6 +257,10 @@ Return only ONE corrected SQLite query (no markdown, no prose)."""
             for m in metric_candidates:
                 if re.search(rf"\b{re.escape(m)}\b", sql, flags=re.I):
                     s = sql.strip().rstrip(";")
+                    match = re.split(r"(?i)\s+limit\s+", s, maxsplit=1)
+                    if len(match) == 2:
+                        prefix, limit_val = match
+                        return f"{prefix} ORDER BY {m} DESC LIMIT {limit_val};"
                     return f"{s} ORDER BY {m} DESC;"
         return None
 
