@@ -6,17 +6,18 @@ queries into structured SQL intents using OpenAI GPT-3.5-turbo with
 detailed schema context for accurate parsing.
 """
 
-from openai import OpenAI
 import json, logging, re
 from typing import Any, Dict, List, Optional
+
+from agents.base import Agent
+from services.llm_service import LLMService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-class IntentParserAgent:
+class IntentParserAgent(Agent):
     def __init__(self, api_key: Optional[str] = None, model: str = "gpt-3.5-turbo"):
         self.api_key = api_key
-        self.client = OpenAI(api_key=api_key)
         self.model = model
         # Compact, strict system prompt
         self.system_prompt = (
@@ -519,13 +520,13 @@ class IntentParserAgent:
         User: Show the bookings of top most customer with higher bookings for pApp in each year
         You: For each year, among rows where IntersightConsumption = 'pApp', find the customer with the most bookings. Return the year, customer name, and the number of bookings. Include ties for first place and sort by year ascending.
         """
-        resp = self.client.chat.completions.create(
+        resp = LLMService.invoke(
             model=model,
-            temperature=0,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_question.strip()}
-            ]
+            ],
+            temperature=0,
         )
         return (resp.choices[0].message.content or "").strip()
 
@@ -566,7 +567,7 @@ class IntentParserAgent:
             except Exception:
                 pass
 
-            resp = self.client.chat.completions.create(**kwargs)
+            resp = LLMService.invoke(**kwargs)
             raw = resp.choices[0].message.content or "{}"
 
             # 4) Parse & normalize output
@@ -577,7 +578,6 @@ class IntentParserAgent:
             ir = self._validate_and_fill_defaults(ir)
             logger.info(f"Successfully parsed intent: {ir}")
             return ir
-
         except Exception as e:
             logger.exception(f"Error parsing intent: {e}")
             return {
@@ -595,7 +595,8 @@ class IntentParserAgent:
                 "used_schema": {"tables": [], "columns": []},
                 "confidence": 0.1
             }
-
+    def run(self, payload: str, context: Dict[str, Any]):
+        return self.parse(payload, context)
 
 
 
