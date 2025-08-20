@@ -8,8 +8,6 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 from agents.visualization.agent import VisualizationAgent, VisualizationOptions
 from agents.base import Agent
-from services.llm_service import LLMService
-from learning.feedback import FeedbackCollector
 
 class ExecutionPlan:
     """Tracks current SQL, retries, errors, and optional visualization options."""
@@ -42,6 +40,7 @@ class ReasoningAgent(Agent):
         if hasattr(self.executor, "set_error_handler"):
             self.executor.set_error_handler(self.handle_execution_error)
         self.viz_agent = VisualizationAgent()
+        self.validation_engine = ValidationEngine()
         self.current_plan: Optional[ExecutionPlan] = None
 
     def run(self, payload: str, context: str):
@@ -117,15 +116,7 @@ class ReasoningAgent(Agent):
                     break
 
                 # 5) Classify & repair
-                err_type = self._classify_error(err_msg)
-                repaired_sql = self._repair_sql(last_sql, schema_context, err_type, err_msg)
-                FeedbackCollector.log_interaction(
-                    query=None,
-                    schema=schema_context,
-                    generated_sql=last_sql,
-                    error=err_msg,
-                    corrected_sql=repaired_sql,
-                )
+
                 if repaired_sql and repaired_sql.strip() != last_sql.strip():
                     # Optional: log for guideline mining
                     self._log_guideline_case(
@@ -178,95 +169,6 @@ class ReasoningAgent(Agent):
             return self._ensure_terminated(s), False
         return self._ensure_terminated(s + " LIMIT 1"), True
 
-    def _classify_error(self, msg: str) -> str:
-        m = msg.lower()
-        if "no such table" in m or "no such column" in m:
-            return "schema"
-        if "syntax error" in m:
-            return "syntax"
-        if "misuse of aggregate" in m or "group by" in m:
-            return "aggregate"
-        if "ambiguous column" in m:
-            return "ambiguous"
-        return "semantic"
-
-    def _repair_sql(self, sql: str, schema_context: str, err_type: str, error_msg: str) -> Optional[str]:
-        """
-        Use schema-aware, targeted prompts to fix SQL. Keep the original intent.
-        Returns ONE corrected SQLite query string or None.
-        """
-        try:
-            from utils.token_tracker import record_openai_usage_from_response
-        except Exception:
-            return None
-
-        system = {
-            "role": "system",
-            "content": "You are a SQL fixer. Return ONE corrected SQLite query only. No markdown, no explanations."
-        }
-        user = {"role": "user", "content": self._prompt_for(err_type, schema_context, sql, error_msg)}
-
-        try:
-            r = LLMService.invoke(
-                model="gpt-3.5-turbo",
-                messages=[system, user],
-                temperature=0.0,
-                max_tokens=400,
-            )
-            # Record token usage
-            record_openai_usage_from_response(r)
-            fixed = r.choices[0].message.content.strip()
-            # Simple guard: ensure it looks like SQL
-            if re.match(r"^\s*(select|with|update|delete|insert)\b", fixed, flags=re.I):
-                return fixed
-            return None
-        except Exception:
-            return None
-
-    def _prompt_for(self, err_type: str, schema_context: str, sql: str, error_msg: str) -> str:
-        common = f"""Schema:
-{schema_context}
-
-Previous SQL:
-{sql}
-
-Error:
-{error_msg}
-"""
-        if err_type == "schema":
-            checklist = (
-                "- Use only tables/columns present in the Schema.\n"
-                "- If a column is missing, pick the closest semantically relevant existing column.\n"
-                "- Preserve the original intent: keep aggregates, filters, and grouping.\n"
-            )
-        elif err_type == "aggregate":
-            checklist = (
-                "- If SELECT mixes aggregates and non-aggregates, add GROUP BY for all non-aggregated columns.\n"
-                "- Apply SUM/AVG/COUNT only to numeric columns.\n"
-            )
-        elif err_type == "ambiguous":
-            checklist = (
-                "- Qualify columns with table aliases.\n"
-                "- Join only on identically named key columns (e.g., *_id) that exist in both tables.\n"
-            )
-        elif err_type == "syntax":
-            checklist = (
-                "- Fix SQL syntax without changing intent.\n"
-                "- Ensure correct order/placement of WHERE, GROUP BY, ORDER BY, LIMIT.\n"
-            )
-        else:  # semantic/other
-            checklist = (
-                "- For top-N, ensure ORDER BY a metric DESC and include LIMIT N.\n"
-                "- If empty results, relax strict equality to LIKE or >= where reasonable.\n"
-                "- If too many rows, add LIMIT 100 with ORDER BY a sensible metric.\n"
-            )
-
-        return f"""{common}
-Fix the SQL using the checklist:
-
-Checklist:
-{checklist}
-Return only ONE corrected SQLite query (no markdown, no prose)."""
 
     def _needs_semantic_adjustment(self, sql: str, result) -> bool:
         """

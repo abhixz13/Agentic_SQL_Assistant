@@ -1,3 +1,3 @@
-from .agent import SQLGeneratorAgent
+"""SQL generator agents package."""
 
-__all__ = ['SQLGeneratorAgent'] 
+__all__ = []

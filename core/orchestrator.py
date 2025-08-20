@@ -22,7 +22,7 @@ step.  Example YAML::
       planner:
         class: agents.sql_generator.planner.SQLPlannerAgent
       validator:
-        class: agents.sql_generator.validator.SQLValidatorAgent
+        class: services.validation_engine.ValidationEngine
       sql_generator:
         class: agents.sql_generator.agent.SQLGeneratorAgent
       executor:
@@ -158,7 +158,7 @@ class Orchestrator:
         schema = self.schema_retriever.get_schema()
         intent = self.intent_parser.parse(question, schema)
         plan = self.planner.create_plan(intent, schema)
-        normalized_plan, _report = self.validator.validate_plan(plan, schema)
+        normalized_plan, _report = self.validator.validate(plan, schema)
         sql_query = self.sql_generator.generate_sql(normalized_plan, schema)
         result = self.executor.execute(sql_query.sql)
 

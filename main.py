@@ -1,6 +1,6 @@
 # main.py
 from agents.workflow import SQLWorkflow
-from agents.sql_generator import SQLGeneratorAgent
+from agents.sql_generator.agent import SQLGeneratorAgent
 import sqlite3
 import json
 from dotenv import load_dotenv
