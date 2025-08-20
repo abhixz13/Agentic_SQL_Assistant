@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from agents.visualization.agent import VisualizationAgent, VisualizationOptions
 from agents.base import Agent
 from services.llm_service import LLMService
+from learning.feedback import FeedbackCollector
 
 class ExecutionPlan:
     """Tracks current SQL, retries, errors, and optional visualization options."""
@@ -73,6 +74,14 @@ class ReasoningAgent(Agent):
                 if probed:
                     result = self.executor.execute(self._ensure_terminated(last_sql))
 
+                FeedbackCollector.log_interaction(
+                    query=None,
+                    schema=schema_context,
+                    generated_sql=self._ensure_terminated(last_sql),
+                    error=None,
+                    corrected_sql=None,
+                )
+
                 # 3) Optional semantic adjustment (top-N, empty results, etc.)
                 if self._needs_semantic_adjustment(last_sql, result):
                     fixed = self._fix_semantic(last_sql, schema_context, result_size=len(getattr(result, "data", [])))
@@ -94,14 +103,29 @@ class ReasoningAgent(Agent):
             except Exception as e:
                 # Track error
                 self.current_plan.errors.append(e)
+                err_msg = str(e)
+                repaired_sql = None
 
                 if not self.current_plan.can_retry():
+                    FeedbackCollector.log_interaction(
+                        query=None,
+                        schema=schema_context,
+                        generated_sql=last_sql,
+                        error=err_msg,
+                        corrected_sql=None,
+                    )
                     break
 
                 # 5) Classify & repair
-                err_msg = str(e)
                 err_type = self._classify_error(err_msg)
                 repaired_sql = self._repair_sql(last_sql, schema_context, err_type, err_msg)
+                FeedbackCollector.log_interaction(
+                    query=None,
+                    schema=schema_context,
+                    generated_sql=last_sql,
+                    error=err_msg,
+                    corrected_sql=repaired_sql,
+                )
                 if repaired_sql and repaired_sql.strip() != last_sql.strip():
                     # Optional: log for guideline mining
                     self._log_guideline_case(
@@ -117,7 +141,16 @@ class ReasoningAgent(Agent):
                     break  # nothing to repair or repair failed
 
         # Final attempt (no probe) so user sees true outcome/error
-        return self.executor.execute(self._ensure_terminated(self.current_plan.current_sql or sql))
+        final_sql = self._ensure_terminated(self.current_plan.current_sql or sql)
+        result = self.executor.execute(final_sql)
+        FeedbackCollector.log_interaction(
+            query=None,
+            schema=schema_context,
+            generated_sql=final_sql,
+            error=None,
+            corrected_sql=None,
+        )
+        return result
 
     # ===== Optional: executor error callback you already supported =====
     def handle_execution_error(self, error):

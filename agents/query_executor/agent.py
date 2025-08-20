@@ -10,6 +10,7 @@ import time
 from typing import Callable, Optional, List, Dict, Any
 from tenacity import retry, stop_after_attempt, wait_exponential
 from pydantic import BaseModel
+from learning.feedback import FeedbackCollector
 
 class ExecutionError(BaseModel):
     """Error information for query execution"""
@@ -64,14 +65,29 @@ class QueryExecutorAgent:
                 cursor = conn.execute(query)
                 results = [dict(row) for row in cursor.fetchall()]
                 logger.debug(f"Query executed successfully. Rows returned: {len(results)}")
-                return SQLResult(
+                result = SQLResult(
                     data=results,
                     execution_time=time.time() - start_time,
                     schema_used=self._get_table_schema(query, conn),
                     sql=query
                 )
+                FeedbackCollector.log_interaction(
+                    query=None,
+                    schema=result.schema_used,
+                    generated_sql=query,
+                    error=None,
+                    corrected_sql=None,
+                )
+                return result
         except sqlite3.Error as e:
             logger.error(f"SQL execution failed: {str(e)}")
+            FeedbackCollector.log_interaction(
+                query=None,
+                schema={},
+                generated_sql=query,
+                error=str(e),
+                corrected_sql=None,
+            )
             raise
 
     def _create_execution_error(self, error: sqlite3.Error, query: str) -> ExecutionError:
