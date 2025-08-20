@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 from .schemas import SQLQuery, SQLGenerationRequest
 from .few_shot_generator import FewShotExampleGenerator
 from .planner import SQLPlannerAgent
-from .validator import SQLValidatorAgent
+from services.validation_engine import ValidationEngine
 from utils.token_tracker import record_openai_usage_from_response
 
 from dotenv import load_dotenv
@@ -57,7 +57,7 @@ class SQLGeneratorAgent(Agent):
         self.model = "gpt-3.5-turbo"
         self.few_shot_generator = FewShotExampleGenerator()
         self.planner = SQLPlannerAgent(api_key)
-        self.validator = SQLValidatorAgent()
+        self.validation_engine = ValidationEngine()
         logger.info("SQLGeneratorAgent initialized with Planner → Validator → Generator flow")
     
     def generate_sql(self, intent_data: dict, schema_info: dict) -> SQLQuery:
@@ -81,7 +81,7 @@ class SQLGeneratorAgent(Agent):
             
             # Step 2: VALIDATOR - Validate and normalize the plan
             logger.info("Step 2: Validating and normalizing plan...")
-            normalized_plan, validation_report = self.validator.validate_plan(plan_dict, schema_info)
+            normalized_plan, validation_report = self.validation_engine.validate(plan_dict, schema_info)
             
             # Check validation results
             if not validation_report.ok:

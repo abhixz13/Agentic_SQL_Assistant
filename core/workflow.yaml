@@ -10,7 +10,7 @@ steps:
     class: agents.sql_generator.planner.SQLPlannerAgent
     params: {}
   validator:
-    class: agents.sql_generator.validator.SQLValidatorAgent
+    class: services.validation_engine.ValidationEngine
     params: {}
   sql_generator:
     class: agents.sql_generator.agent.SQLGeneratorAgent
