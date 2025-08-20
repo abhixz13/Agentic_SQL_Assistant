@@ -1,0 +1,24 @@
+steps:
+  schema_retriever:
+    class: core.orchestrator.SQLiteSchemaRetriever
+    params:
+      db_path: data/db.sqlite
+  intent_parser:
+    class: agents.intent_parser.agent.IntentParserAgent
+    params: {}
+  planner:
+    class: agents.sql_generator.planner.SQLPlannerAgent
+    params: {}
+  validator:
+    class: agents.sql_generator.validator.SQLValidatorAgent
+    params: {}
+  sql_generator:
+    class: agents.sql_generator.agent.SQLGeneratorAgent
+    params: {}
+  executor:
+    class: agents.query_executor.agent.QueryExecutorAgent
+    params:
+      db_path: data/db.sqlite
+  visualizer:
+    class: agents.visualization.agent.VisualizationAgent
+    params: {}
