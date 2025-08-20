@@ -34,14 +34,19 @@ def prepare_sqlite_db(
             logger.error(f"Input file not found: {input_file_path}")
             return None
 
-        # Read input file
-        if input_file_path.endswith('.csv'):
-            df = pd.read_csv(input_file_path)
-        elif input_file_path.endswith('.xlsx'):
+        # Read input file - try to detect format automatically
+        try:
+            # First try reading as Excel (handles .xlsx, .xls, and misnamed Excel files)
             df = pd.read_excel(input_file_path)
-        else:
-            logger.error("Unsupported file format. Only CSV/XLSX are supported.")
-            return None
+            logger.info(f"Successfully read {input_file_path} as Excel file")
+        except Exception:
+            try:
+                # If Excel fails, try CSV
+                df = pd.read_csv(input_file_path)
+                logger.info(f"Successfully read {input_file_path} as CSV file")
+            except Exception as e:
+                logger.error(f"Failed to read file as both Excel and CSV: {e}")
+                return None
 
         # Ensure the `data` folder exists
         os.makedirs("data", exist_ok=True)

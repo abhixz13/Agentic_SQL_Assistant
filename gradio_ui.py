@@ -11,11 +11,10 @@ import logging
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from agents.workflow import SQLWorkflow
-from agents.query_executor.agent import QueryExecutorAgent
+from agents.intent_parser.agent import IntentParserAgent
 from agents.sql_generator.agent import SQLGeneratorAgent
 from agents.visualization.agent import VisualizationAgent, VisualizationOptions
-from utils.token_tracker import token_tracker, record_openai_usage_from_response
-from agents.schema_loader.semantic_schema import SemanticSchemaManager
+from utils.token_tracker import token_tracker
 
 # Configure logging
 logging.basicConfig(
@@ -28,470 +27,267 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Global variables to store current database info (set dynamically)
+current_db_path = None
+current_table_name = None
+
 
 def setup_workflow():
-    """Initialize the AI workflow with the correct database"""
-    workflow = SQLWorkflow("data/product_sales.db")  # Use the correct database
+    """Initialize the AI workflow with automatic database setup"""
+    from utils.file_converter import prepare_sqlite_db
+    import glob
+    from pathlib import Path
+    
+    # Look for data files first to determine database name
+    data_files = []
+    for pattern in ['data/*.csv', 'data/*.xlsx', 'data/*.xls']:
+        data_files.extend(glob.glob(pattern))
+    
+    if not data_files:
+        # Fallback to default name if no data files found
+        db_path = "data/product_sales.db"
+        table_name = "product_sales"
+        logger.warning("⚠️  No data files found, using default database name")
+    else:
+        # Use the first data file to determine names
+        source_file = data_files[0]
+        file_stem = Path(source_file).stem  # Gets filename without extension
+        
+        # Convert to lowercase and replace spaces/special chars with underscores
+        clean_name = file_stem.lower().replace(' ', '_').replace('-', '_')
+        
+        db_path = f"data/{clean_name}.db"
+        table_name = clean_name
+        
+        logger.info(f"📁 Using data file: {source_file}")
+        logger.info(f"🗄️  Database will be: {db_path}")
+        logger.info(f"📊 Table will be: {table_name}")
+    
+    # Check if database exists and has tables
+    db_needs_setup = True
+    if os.path.exists(db_path):
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            tables = cursor.fetchall()
+            conn.close()
+            if tables:  # Database has tables
+                db_needs_setup = False
+                logger.info(f"✅ Database already exists with {len(tables)} table(s)")
+        except Exception as e:
+            logger.warning(f"Database exists but couldn't check tables: {e}")
+    
+    # If database needs setup, convert the data file
+    if db_needs_setup and data_files:
+        logger.info("🔄 Creating database from data file...")
+        source_file = data_files[0]
+        
+        try:
+            # Convert to SQLite database with dynamic names
+            result_db = prepare_sqlite_db(source_file, table_name=table_name)
+            if result_db and os.path.exists(result_db):
+                # If the created database is not at the expected location, move it
+                if result_db != db_path:
+                    import shutil
+                    shutil.move(result_db, db_path)
+                    logger.info(f"✅ Database created and moved from {result_db} to {db_path}")
+                else:
+                    logger.info(f"✅ Database created successfully at {db_path}")
+            else:
+                logger.error(f"❌ Failed to create database from data file. Expected: {result_db}, Found: {os.path.exists(result_db) if result_db else 'None'}")
+        except Exception as e:
+            logger.error(f"❌ Error creating database: {e}")
+    
+    # Store the database info globally for other functions to use
+    global current_db_path, current_table_name
+    current_db_path = db_path
+    current_table_name = table_name
+    
+    workflow = SQLWorkflow(db_path)
+    intent_parser = IntentParserAgent()
     sql_generator = SQLGeneratorAgent()
     viz_agent = VisualizationAgent()
-    return workflow, sql_generator, viz_agent
+    return workflow, intent_parser, sql_generator, viz_agent
 
-def parse_natural_language_to_intent(natural_query: str, schema: dict = None) -> dict:
-    """LLM-driven intent parsing that works with any dataset schema"""
+
+
+def generate_dynamic_examples():
+    """Generate dynamic examples based on actual database schema"""
     try:
-        from openai import OpenAI
-        from dotenv import load_dotenv
+        schema = get_db_schema()
+        if not schema.get("tables"):
+            return [], "", ""
         
-        # Load environment variables
-        load_dotenv()
+        # Get first table and its columns for example generation
+        table_name = list(schema["tables"].keys())[0]
+        columns = [col["name"] for col in schema["tables"][table_name]["columns"]]
         
-        # Get API key
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            print("⚠️  No OpenAI API key found. Using fallback intent parsing.")
-            return create_fallback_intent(natural_query, schema)
+        # Categorize columns for smart example generation
+        numeric_cols = []
+        categorical_cols = []
+        date_cols = []
         
-        # Initialize OpenAI client
-        client = OpenAI(api_key=api_key)
+        for col in columns:
+            col_lower = col.lower()
+            if any(keyword in col_lower for keyword in ['date', 'time', 'year', 'month']):
+                date_cols.append(col)
+            elif any(keyword in col_lower for keyword in ['amount', 'price', 'cost', 'value', 'total', 'count', 'quantity', 'booking', 'revenue', 'sales']):
+                numeric_cols.append(col)
+            else:
+                categorical_cols.append(col)
         
-        # Get schema if not provided
-        if schema is None:
-            schema = get_formatted_schema()
+        examples = []
+        placeholder_text = f"Ask questions about your {table_name} data"
         
-        # Create schema context for the LLM
-        schema_context = create_schema_context(schema)
+        # Generate examples based on available columns
+        if numeric_cols and categorical_cols:
+            examples.append([f"Show me {numeric_cols[0]} by {categorical_cols[0]}", "bar"])
+            if len(categorical_cols) > 1:
+                examples.append([f"How many records per {categorical_cols[1]}?", "pie"])
         
-        # LLM prompt for intent parsing
-        prompt = f"""You are an Intent Parser that converts a natural-language question into a STRICT JSON intent for SQL generation.
-
-            ## Database Schema (human-readable)
-            {schema_context}
-
-            ## Output format (STRICT JSON, no markdown, no prose)
-            {{
-            "action": "select|aggregate|filter|top_n",
-            "entity": "<table_name>",
-            "params": {{
-                "column": "<single column or *>",
-                "function": "sum|count|avg|max|min|null",
-                "group_by": "<column or null>",
-                "order_by": "<column or null>",
-                "desc": true|false|null,
-                "limit": <integer or null>,
-                "filters": [{{"column":"<col>","op":"="|">"|"<"|">="|"<="|"LIKE","value":"<val>"}}]
-            }}
-            }}
-
-            ## Rules (follow exactly)
-            - Use only columns and tables that appear in the schema above.
-            - If the user says “by X” or “per X”, set params.group_by = "X".
-            - For revenue/sales/amount/price, prefer numeric columns containing ["total","revenue","sales","amount","price"].
-            - For “top N …”, set action="top_n", set params.limit=N, and include params.order_by=<metric> and params.desc=true.
-            - For aggregates, params.column MUST be a single string (not a list). Use "*" only for COUNT(*).
-            - If unsure, choose the most plausible table from the schema and set params.limit=20.
-
-            ## Few-shot examples
-            Q: "Show me revenue by region"
-            A:
-            {{"action":"aggregate","entity":"product_sales","params":{{"column":"total_price","function":"sum","group_by":"region","order_by":null,"desc":null,"limit":null,"filters":[]}}}}
-
-            Q: "Top 5 customers by sales"
-            A:
-            {{"action":"aggregate","entity":"product_sales","params":{{"column":"total_price","function":"sum","group_by":"customer_id","order_by":"total_price","desc":true,"limit":5,"filters":[]}}}}
-
-            Q: "How many orders per category?"
-            A:
-            {{"action":"aggregate","entity":"product_sales","params":{{"column":"*","function":"count","group_by":"category","order_by":null,"desc":null,"limit":null,"filters":[]}}}}
-
-            ## User question
-            "{natural_query}"
-
-            ## Return the STRICT JSON only:
+        if numeric_cols:
+            examples.append([f"What is the total {numeric_cols[0]}?", "table"])
+            if len(numeric_cols) > 1:
+                examples.append([f"Compare {numeric_cols[0]} and {numeric_cols[1]}", "bar"])
+        
+        if date_cols and numeric_cols:
+            examples.append([f"{numeric_cols[0]} trend over {date_cols[0]}", "line"])
+        
+        if categorical_cols:
+            examples.append([f"Top 5 records by {categorical_cols[0]}", "bar"])
+            placeholder_text = f"Ask questions about your {table_name} data (e.g., 'Show me {numeric_cols[0] if numeric_cols else 'data'} by {categorical_cols[0]}')"
+        
+        # Generate example cards text
+        example_cards = f"""
+        <div class="example-card">
+        <strong>Data Analysis:</strong><br>
+        • "Show me data grouped by {categorical_cols[0] if categorical_cols else 'category'}"<br>
+        • "What is the total {numeric_cols[0] if numeric_cols else 'amount'}?"<br>
+        • "Compare different {categorical_cols[1] if len(categorical_cols) > 1 else 'groups'}"
+        </div>
+        
+        <div class="example-card">
+        <strong>Insights:</strong><br>
+        • "Top 5 records by {numeric_cols[0] if numeric_cols else 'value'}"<br>
+        • "How many records per {categorical_cols[0] if categorical_cols else 'category'}?"<br>
+        • "Which {categorical_cols[0] if categorical_cols else 'item'} has the highest {numeric_cols[0] if numeric_cols else 'value'}?"
+        </div>
+        """
+        
+        if date_cols:
+            example_cards += f"""
+            <div class="example-card">
+            <strong>Time-based Analysis:</strong><br>
+            • "{numeric_cols[0] if numeric_cols else 'Data'} trend over {date_cols[0]}"<br>
+            • "Monthly {numeric_cols[0] if numeric_cols else 'summary'}"<br>
+            • "Best performing {date_cols[0].replace('_', ' ')}"
+            </div>
             """
-
-        # Call LLM for intent parsing
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": (
-                    "You are a careful SQL intent parser. "
-                    "Always return STRICT JSON that matches the required schema. "
-                    "Do not include markdown, code fences, or explanations."
-                    )
-                },
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.1,
-            max_tokens=500
-        )
-        # Record token usage
-        record_openai_usage_from_response(response)
         
-        # Parse the response
-        intent_text = response.choices[0].message.content.strip()
-        
-        # ---- JSON extraction ----
-        def extract_json(s: str) -> str:
-            s = re.sub(r"^```(?:json)?\s*|\s*```$", "", s.strip(), flags=re.IGNORECASE)
-            start, end = s.find("{"), s.rfind("}")
-            return s[start:end+1] if start != -1 and end != -1 else s
-
-        try:
-            intent = json.loads(extract_json(intent_text))
-            if not isinstance(intent, dict) or "action" not in intent or "entity" not in intent:
-                raise ValueError("Invalid intent structure")
-            print(f"🤖 LLM Intent Parsing: {natural_query} → {intent}")
-            return intent
-
-        except (json.JSONDecodeError, ValueError) as e:
-            print(f"❌ LLM Intent Parsing Error: {e}")
-            print(f"Raw response: {intent_text}")
-            return create_fallback_intent(natural_query, schema)
-
-    except Exception as e:
-        print(f"❌ Intent Parsing Error: {e}")
-        return create_fallback_intent(natural_query, schema)
-
-# Creating the schema context for the LLM
-"""
-The schema context is a string that describes the database schema in a way that is easy for the LLM to understand.
-It is used to help the LLM understand the database schema and generate SQL queries.
-
-1. No FK dependence: join suggestions come from shared column names and the common *_id convention.
-2. Engine-agnostic: only uses the schema dict (table → columns with name/type), so it works with SQLite/MySQL/Postgres as long as your extractor fills that shape.
-3. Semantic cues: numeric/temporal/categorical hints push the model toward sane SUM/AVG, GROUP BY, and time filters.
-4. Token control: truncates overly large schemas to avoid blowing prompt size.
-"""
-def create_schema_context(schema: dict, max_tables: int = 30, max_cols_per_table: int = 30) -> str:
-    """
-    Turn the extracted schema dict into an LLM-friendly description that:
-      - works even when foreign keys are missing,
-      - infers simple semantic roles from names/types (numeric / categorical / temporal / boolean),
-      - suggests soft join hints based on shared column names and *_id conventions,
-      - truncates very large schemas to keep prompts small.
-
-    The function is agnostic to DB engine; it only relies on the `schema` dict shape produced by get_formatted_schema().
-    """
-    # Defensive defaults
-    tables = schema.get("tables", {}) or {}
-    if not isinstance(tables, dict):
-        return "No schema available."
-
-    # Build global index of column name -> [tables...]
-    all_columns = {}
-    for tname, tinfo in tables.items():
-        for col in (tinfo.get("columns") or []):
-            cname = str(col.get("name", "")).strip()
-            if not cname:
-                continue
-            all_columns.setdefault(cname, set()).add(tname)
-
-    def role_hint(col_name: str, col_type: str) -> str:
-        """Heuristic semantic role from name/type only (engine-agnostic)."""
-        name = (col_name or "").lower()
-        ctype = (col_type or "").upper()
-
-        # temporal first (either name or type suggests date/time)
-        if "date" in name or "time" in name or ctype in {"DATE", "DATETIME", "TIMESTAMP"}:
-            return "temporal (date filters/trends)"
-
-        # boolean-ish
-        if name.startswith(("is_", "has_")) or ctype in {"BOOLEAN", "BOOL"}:
-            return "boolean (true/false filtering)"
-
-        # numeric metrics (by type or name cues)
-        metric_keywords = ("price", "amount", "revenue", "sales", "qty", "quantity", "total", "cost")
-        if ctype in {"INTEGER", "INT", "BIGINT", "SMALLINT", "REAL", "FLOAT", "DOUBLE", "NUMERIC", "DECIMAL"}:
-            if any(k in name for k in metric_keywords):
-                return "numeric_metric (use in SUM/AVG)"
-            return "numeric (aggregations allowed)"
-
-        # text / categorical
-        if ctype in {"TEXT", "CHAR", "NCHAR", "VARCHAR", "NVARCHAR", "STRING"} or ctype == "" or ctype is None:
-            return "categorical (GROUP BY / filtering)"
-
-        # default
-        return "other"
-
-    def soft_join_targets(current_table: str, col_name: str) -> list:
-        """
-        Guess join opportunities:
-          - same column name exists in other tables,
-          - *_id appears across multiple tables,
-          - id columns across tables (very common in dumps).
-        """
-        peers = set(all_columns.get(col_name, set()))
-        if current_table in peers:
-            peers.remove(current_table)
-
-        hints = set(peers)
-
-        # *_id convention: suggest tables sharing the same *_id
-        if col_name.lower().endswith("_id"):
-            for t, tinfo in tables.items():
-                if t == current_table:
-                    continue
-                for c in (tinfo.get("columns") or []):
-                    if str(c.get("name", "")).lower() == col_name.lower():
-                        hints.add(t)
-
-        # generic "id" columns (common but noisy) – only hint if many tables share it
-        if col_name.lower() in {"id", "pk", "key"} and len(all_columns.get(col_name, [])) > 1:
-            hints.update(all_columns[col_name])
-            hints.discard(current_table)
-
-        # limit how many we print to keep prompt short
-        return sorted(list(hints))[:3]
-
-    # Compose context string with truncation
-    context_lines = []
-    context_lines.append("📚 Available Tables and Columns (semantic hints & soft join suggestions):")
-
-    shown_tables = 0
-    for tname, tinfo in list(tables.items())[:max_tables]:
-        context_lines.append(f"\n📊 Table: {tname}")
-        context_lines.append("Columns:")
-
-        cols = (tinfo.get("columns") or [])[:max_cols_per_table]
-        for col in cols:
-            cname = str(col.get("name", ""))
-            ctype = str(col.get("type", "") or "")
-            # base line
-            line = f"  - {cname} ({ctype})"
-
-            # role
-            r = role_hint(cname, ctype)
-            if r:
-                line += f" → {r}"
-
-            # primary / not null flags if present
-            if col.get("primary_key"):
-                line += " [PRIMARY KEY]"
-            if col.get("not_null"):
-                line += " [NOT NULL]"
-
-            # soft join hints
-            joins = soft_join_targets(tname, cname)
-            if joins:
-                line += f" → possibly joins with: {', '.join(joins)}"
-
-            context_lines.append(line)
-
-        # indexes (if available)
-        idxs = tinfo.get("indexes") or []
-        if idxs:
-            context_lines.append("Indexes:")
-            for idx in idxs[:8]:  # guardrail
-                iname = idx.get("name", "")
-                icols = ", ".join(idx.get("columns", []) or [])
-                uniq = " (UNIQUE)" if idx.get("unique") else ""
-                context_lines.append(f"  - {iname}: {icols}{uniq}")
-
-        shown_tables += 1
-
-    # Truncation warnings
-    total_tables = len(tables)
-    if shown_tables < total_tables:
-        context_lines.append(f"\n… ({total_tables - shown_tables} more tables omitted for brevity)")
-
-    return "\n".join(context_lines)
-
-
-def create_fallback_intent(natural_query: str, schema: dict) -> dict:
-    """Create an intelligent fallback intent when LLM parsing fails"""
-    query_lower = natural_query.lower()
-    
-    # Get the first table from schema
-    tables = list(schema.get("tables", {}).keys())
-    if not tables:
-        return {"action": "select", "entity": "unknown", "params": {"limit": 10}}
-    
-    table_name = tables[0]
-    table_info = schema.get("tables", {}).get(table_name, {})
-    columns = table_info.get("columns", [])
-    
-    # Find numeric columns for aggregation
-    numeric_columns = [col["name"] for col in columns if col["type"] in ["INTEGER", "REAL"]]
-    text_columns = [col["name"] for col in columns if col["type"] == "TEXT"]
-    
-    # Enhanced pattern matching with schema awareness
-    if any(word in query_lower for word in ["count", "how many", "number"]):
-        # Look for grouping by text columns
-        for col in text_columns:
-            if col in query_lower:
-                return {
-                    "action": "aggregate",
-                    "entity": table_name,
-                    "params": {"function": "count", "column": "*", "group_by": col}
-                }
-        return {
-            "action": "aggregate",
-            "entity": table_name,
-            "params": {"function": "count", "column": "*"}
-        }
-    
-    elif any(word in query_lower for word in ["sum", "total", "revenue", "sales", "amount"]):
-        # Look for numeric columns to sum
-        # Prioritize columns that match revenue/sales concepts
-        revenue_columns = [col for col in numeric_columns if any(word in col.lower() for word in ["total", "revenue", "sales", "amount"])]
-        price_columns = [col for col in numeric_columns if "price" in col.lower()]
-        
-        # Use the best matching column
-        target_column = None
-        if revenue_columns:
-            target_column = revenue_columns[0]  # Prefer total_price, revenue, etc.
-        elif price_columns:
-            target_column = price_columns[0]    # Fallback to price columns
-        elif numeric_columns:
-            target_column = numeric_columns[0]  # Last resort
+        return examples, placeholder_text, example_cards
             
-        if target_column:
-            # Check for grouping
-            for group_col in text_columns:
-                if group_col in query_lower:
-                    return {
-                        "action": "aggregate",
-                        "entity": table_name,
-                        "params": {"function": "sum", "column": target_column, "group_by": group_col}
-                    }
-            return {
-                "action": "aggregate",
-                "entity": table_name,
-                "params": {"function": "sum", "column": target_column}
-            }
-    
-    elif any(word in query_lower for word in ["average", "avg", "mean"]):
-        # Look for numeric columns to average
-        for col in numeric_columns:
-            if col in query_lower:
-                # Check for grouping
-                for group_col in text_columns:
-                    if group_col in query_lower:
-                        return {
-                            "action": "aggregate",
-                            "entity": table_name,
-                            "params": {"function": "avg", "column": col, "group_by": group_col}
-                        }
-                return {
-                    "action": "aggregate",
-                    "entity": table_name,
-                    "params": {"function": "avg", "column": col}
-                }
-    
-    elif any(word in query_lower for word in ["top", "highest", "maximum"]):
-        # Look for numeric columns to order by
-        for col in numeric_columns:
-            if col in query_lower:
-                return {
-                    "action": "top_n",
-                    "entity": table_name,
-                    "params": {"limit": 5, "order_by": col, "desc": True}
-                }
-    
-    elif any(word in query_lower for word in ["by", "group", "per"]):
-        # Look for grouping patterns
-        for col in text_columns:
-            if col in query_lower:
-                # Find a numeric column to aggregate
-                if numeric_columns:
-                    return {
-                        "action": "aggregate",
-                        "entity": table_name,
-                        "params": {"function": "sum", "column": numeric_columns[0], "group_by": col}
-                    }
-    
-    # Default fallback
-    return {
-        "action": "select",
-        "entity": table_name,
-        "params": {"limit": 20}
-    }
+    except Exception as e:
+        logger.warning(f"Could not generate dynamic examples: {e}")
+        return [], "Ask questions about your data", ""
 
-def get_formatted_schema():
-    """Fetch complete schema with semantic enhancement if available."""
-    try:
-        # First try to load semantic schema from correct path
-        semantic_manager = SemanticSchemaManager("agents/schema_loader/config/semantic_schemas")
-        semantic_schema = semantic_manager.load_schema("product_sales_semantic.json")
+def get_current_db_info():
+    """Get current database info dynamically"""
+    global current_db_path, current_table_name
+    
+    # If not set, determine dynamically
+    if current_db_path is None or current_table_name is None:
+        import glob
+        from pathlib import Path
         
-        # Get standard schema structure
-        standard_schema = _get_standard_schema()
+        # Look for data files
+        data_files = []
+        for pattern in ['data/*.csv', 'data/*.xlsx', 'data/*.xls']:
+            data_files.extend(glob.glob(pattern))
         
-        if semantic_schema:
-            logger.info("✅ Using enhanced semantic schema for Planner → Validator → Generator")
-            # Enhanced schema with full semantic context
-            return {
-                **standard_schema,
-                "semantic_context": semantic_manager.get_enhanced_schema_context(semantic_schema),
-                "semantic_schema": semantic_schema,  # Full semantic schema object for agents
-                "has_semantic": True
-            }
+        if data_files:
+            source_file = data_files[0]
+            file_stem = Path(source_file).stem
+            clean_name = file_stem.lower().replace(' ', '_').replace('-', '_')
+            current_db_path = f"data/{clean_name}.db"
+            current_table_name = clean_name
         else:
-            logger.info("📊 Using standard schema (no semantic enhancement)")
-            return {**standard_schema, "has_semantic": False, "semantic_schema": None}
-            
-    except Exception as e:
-        print(f"Schema Error: {str(e)}")
-        return {"tables": {}, "error": str(e), "has_semantic": False, "semantic_schema": None}
+            # Ultimate fallback - check for any .db files
+            db_files = glob.glob('data/*.db')
+            if db_files:
+                current_db_path = db_files[0]
+                current_table_name = Path(db_files[0]).stem
+            else:
+                # No data found
+                current_db_path = "data/unknown.db"
+                current_table_name = "unknown"
+    
+    return current_db_path, current_table_name
 
-def _get_standard_schema():
-    """Fetch basic schema metadata from the database."""
+def get_db_schema():
+    """Get detailed database schema in format expected by IntentParserAgent"""
     try:
-        with sqlite3.connect("data/product_sales.db") as conn:
+        db_path, table_name = get_current_db_info()
+        with sqlite3.connect(db_path) as conn:
             cursor = conn.cursor()
-            schema = {"tables": {}}
-            
-            # Get table info
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = [table[0] for table in cursor.fetchall() if table[0] != "sqlite_sequence"]
+            tables = cursor.fetchall()
             
-            for table_name in tables:
-                # Get columns
-                cursor.execute(f"PRAGMA table_info({table_name})")
+            schema = {
+                "tables": {},
+                "relationships": []
+            }
+            
+            for table in tables:
+                table_name = table[0]
+                cursor.execute("PRAGMA table_info({})".format(table_name))
+                table_info = cursor.fetchall()
+                
                 columns = []
-                for col in cursor.fetchall():
+                for col in table_info:
                     columns.append({
-                        "name": col[1],  # column name
-                        "type": col[2],   # data type
+                        "name": col[1],
+                        "type": col[2],
                         "not_null": bool(col[3]),
                         "default": col[4],
                         "primary_key": bool(col[5])
                     })
                 
-                # Get indexes
-                cursor.execute(f"PRAGMA index_list({table_name})")
-                indexes = []
-                for idx in cursor.fetchall():
-                    index_name = idx[1]
-                    cursor.execute(f"PRAGMA index_info({index_name})")
-                    index_cols = [col[2] for col in cursor.fetchall()]  # column names
-                    indexes.append({
-                        "name": index_name,
-                        "columns": index_cols,
-                        "unique": bool(idx[2])
-                    })
-                
                 # Get foreign keys
-                cursor.execute(f"PRAGMA foreign_key_list({table_name})")
+                cursor.execute("PRAGMA foreign_key_list({})".format(table_name))
                 foreign_keys = []
                 for fk in cursor.fetchall():
                     foreign_keys.append({
-                        "column": fk[3],  # local column
-                        "references_table": fk[2],  # foreign table
-                        "references_column": fk[4]  # foreign column
+                        "column": fk[3],
+                        "references_table": fk[2],
+                        "references_column": fk[4]
                     })
                 
                 schema["tables"][table_name] = {
                     "columns": columns,
-                    "indexes": indexes,
                     "foreign_keys": foreign_keys
                 }
             
+            # Try to load and integrate semantic schema if available
+            try:
+                from agents.schema_loader.semantic_schema import SemanticSchemaManager
+                semantic_manager = SemanticSchemaManager("agents/schema_loader/config/semantic_schemas")
+                semantic_file = f"{table_name}_semantic.json"
+                semantic_schema = semantic_manager.load_schema(semantic_file)
+                
+                if semantic_schema:
+                    # Enhance schema with semantic information
+                    enhanced_context = semantic_manager.get_combined_schema_context(semantic_schema, schema)
+                    schema["semantic_context"] = enhanced_context
+                    logger.info("📊 Using enhanced semantic schema")
+                else:
+                    logger.info("📊 Using standard schema (no semantic enhancement)")
+            except Exception as semantic_error:
+                logger.info(f"📊 Using standard schema (semantic error: {semantic_error})")
+            
             return schema
-        
     except Exception as e:
-        print(f"Schema Error: {str(e)}")
-        return {"tables": {}, "error": str(e)}
+        return {"tables": {}, "relationships": [], "Error": str(e)}
 
 def process_natural_language_query(natural_query, chart_type):
     """Convert natural language to SQL and execute with visualization"""
@@ -500,23 +296,20 @@ def process_natural_language_query(natural_query, chart_type):
         # Reset token tracker at the start of one end-to-end request
         token_tracker.reset()
         # Initialize AI agents
-        workflow, sql_generator, viz_agent = setup_workflow()
+        workflow, intent_parser, sql_generator, viz_agent = setup_workflow()
         
         # Get database schema for context
-        schema = get_formatted_schema()
-        schema_context = create_schema_context(schema)
+        schema = get_db_schema()
         
-        # Parse natural language to structured intent using LLM
-        intent = parse_natural_language_to_intent(natural_query, schema)
+        # Parse natural language to structured intent using agent
+        intent = intent_parser.parse(natural_query, schema)
         
-        # Generate SQL using LLM-based generator
+        # Generate SQL using LLM-based generator with enhanced schema
         sql_result = sql_generator.generate_sql(intent, schema)
         sql_query = sql_result.sql
         
         # Execute the generated SQL using workflow
-        # Create a JSON-serializable version of schema for workflow
-        schema_for_workflow = {k: v for k, v in schema.items() if k != 'semantic_schema'}
-        result = workflow.run(sql_query, schema_context=json.dumps(schema_for_workflow))
+        result = workflow.run(sql_query, schema_context=json.dumps(schema))
         result_df = pd.DataFrame(result.data)
         
         # Build explanation
@@ -532,7 +325,7 @@ def process_natural_language_query(natural_query, chart_type):
         # Attempt to get SQLite query plan
         plan_lines = []
         try:
-            with sqlite3.connect("data/product_sales.db") as plan_conn:
+            with sqlite3.connect(current_db_path) as plan_conn:
                 # Prefer the exact executed SQL, if provided by the executor
                 executed_sql = getattr(result, "sql", sql_query)
                 cur = plan_conn.execute(f"EXPLAIN QUERY PLAN {executed_sql.rstrip(';')}")
@@ -564,8 +357,7 @@ def process_natural_language_query(natural_query, chart_type):
             model_bits.append(f"confidence: {confidence:.2f}")
             if confidence < 0.5 and executed_sql_differs:  # Only show note if correction actually happened
                 model_bits.append("\n**Note**: Low confidence indicates the initial query required correction. The system automatically fixed the issues below:")
-                if "product_name" in sql_query and "product_sales" in getattr(result, "sql", ""):
-                    model_bits.append("- Fixed table name from 'product_name' to 'product_sales'")
+                model_bits.append("- Fixed schema/table references automatically")
         if complexity:
             model_bits.append(f"complexity: {complexity}")
         if estimated_rows:
@@ -600,23 +392,36 @@ def process_natural_language_query(natural_query, chart_type):
             cols = list(result_df.columns)
             numeric_cols = result_df.select_dtypes(include=["number"]).columns.tolist()
 
-            # Prefer common categorical dimensions for x
-            preferred_x_order = ["region", "category", "customer_id", "order_date", "product_name"]
-            x_axis = next((c for c in preferred_x_order if c in cols), None)
-            if x_axis is None and cols:
-                # fallback to first non-numeric column
-                non_numeric_cols = [c for c in cols if c not in numeric_cols]
-                x_axis = non_numeric_cols[0] if non_numeric_cols else (cols[0] if cols else None)
+            # Dynamically determine categorical dimensions for x-axis
+            # Prefer text/string columns, date columns, and ID columns
+            categorical_cols = []
+            date_cols = []
+            id_cols = []
+            
+            for col in cols:
+                col_lower = col.lower()
+                if any(keyword in col_lower for keyword in ['date', 'time', 'year', 'month']):
+                    date_cols.append(col)
+                elif any(keyword in col_lower for keyword in ['id', 'name', 'type', 'category', 'region', 'channel']):
+                    id_cols.append(col)
+                elif col not in numeric_cols:
+                    categorical_cols.append(col)
+            
+            # Priority order: dates, then IDs/categories, then other non-numeric
+            preferred_x_candidates = date_cols + id_cols + categorical_cols
+            x_axis = preferred_x_candidates[0] if preferred_x_candidates else (cols[0] if cols else None)
 
-            # Prefer meaningful numeric metrics for y
-            preferred_y_order = [
-                "total_price", "total_sales", "revenue", "amount", "price_per_unit",
-                "avg_price", "count", "quantity", "sum", "avg"
-            ]
-            y_axis = next((c for c in preferred_y_order if c in cols), None)
-            if y_axis is None and numeric_cols:
-                # pick first numeric that's not the x-axis
-                y_axis = next((c for c in numeric_cols if c != x_axis), numeric_cols[0])
+            # Dynamically determine numeric metrics for y-axis
+            # Prefer columns with keywords suggesting aggregatable values
+            aggregatable_cols = []
+            for col in numeric_cols:
+                col_lower = col.lower()
+                if any(keyword in col_lower for keyword in ['total', 'sum', 'amount', 'price', 'cost', 'value', 'revenue', 'sales', 'count', 'quantity', 'booking']):
+                    aggregatable_cols.append(col)
+            
+            # Use aggregatable columns first, then any numeric column
+            preferred_y_candidates = aggregatable_cols + [c for c in numeric_cols if c not in aggregatable_cols]
+            y_axis = next((c for c in preferred_y_candidates if c != x_axis), preferred_y_candidates[0] if preferred_y_candidates else None)
 
             # If we still cannot determine axes, fall back to table view
             if not x_axis or (chart_type != "table" and not y_axis):
@@ -642,22 +447,7 @@ def process_natural_language_query(natural_query, chart_type):
         logger.error(f"Error processing query: {str(e)}")
         raise
 
-def get_db_schema():
-    """Get database schema for reference"""
-    try:
-        with sqlite3.connect("data/product_sales.db") as conn:  # Use correct database
-            cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = cursor.fetchall()
-            schema = {}
-            for table in tables:
-                table_name = table[0]
-                cursor.execute("PRAGMA table_info({})".format(table_name))
-                columns = [col[1] for col in cursor.fetchall()]
-                schema[table_name] = columns
-            return schema
-    except Exception as e:
-        return {"Error": str(e)}
+
 
 # Custom CSS for modern styling
 custom_css = """
@@ -751,7 +541,7 @@ with gr.Blocks(
                 with gr.Column(scale=4):
                     query_input = gr.Textbox(
                         label="",
-                        placeholder="What would you like to know? (e.g., 'Show me revenue by region' or 'Which customers bought the most?')",
+                        placeholder="Ask questions about your data",
                         lines=3,
                         elem_classes="query-input"
                     )
@@ -811,39 +601,29 @@ with gr.Blocks(
     
     # Sidebar with examples and schema
     with gr.Accordion("💡 Example Questions", open=False):
-        gr.Markdown(
-            """
+        gr.Markdown("""
             <div class="example-card">
-            <strong>Revenue Analysis:</strong><br>
-            • "Show me revenue by region"<br>
-            • "What's the total sales for each category?"<br>
-            • "Which payment method generates the most revenue?"
+            <strong>Data Analysis:</strong><br>
+            • "Show me data grouped by category"<br>
+            • "What is the total amount?"<br>
+            • "Compare different groups"
             </div>
             
             <div class="example-card">
-            <strong>Customer Insights:</strong><br>
-            • "Top 5 customers by total purchases"<br>
-            • "How many orders per customer segment?"<br>
-            • "Which customers haven't ordered recently?"
+            <strong>Insights:</strong><br>
+            • "Top 5 records by value"<br>
+            • "How many records per category?"<br>
+            • "Which item has the highest value?"
             </div>
-            
-            <div class="example-card">
-            <strong>Time-based Analysis:</strong><br>
-            • "Revenue trend over time"<br>
-            • "Monthly sales comparison"<br>
-            • "Best performing months"
-            </div>
-            """
-        )
+            """)
         
+        # Static examples that work for any dataset
         gr.Examples(
             examples=[
-                ["Show me revenue by region", "bar"],
-                ["How many orders per category?", "pie"],
-                ["Top 5 customers by total purchases", "bar"],
-                ["Revenue trend over time", "line"],
-                ["Which payment method is most popular?", "pie"],
-                ["Average order value by sales channel", "bar"]
+                ["What is the total amount?", "table"],
+                ["Show me data by category", "bar"],
+                ["Top 5 records", "bar"],
+                ["Compare different groups", "pie"]
             ],
             inputs=[query_input, chart_type],
             label="Click to try these examples:"
@@ -852,7 +632,7 @@ with gr.Blocks(
     with gr.Accordion("🗃️ Database Schema", open=False):
         with gr.Column(elem_classes="schema-display"):
             schema_output = gr.JSON(
-                get_db_schema(), 
+            get_db_schema().get("tables", {}), 
                 label="Available Tables and Columns"
             )
     
@@ -864,9 +644,20 @@ with gr.Blocks(
             """
         )
         
-        # Load current semantic schema
-        semantic_manager = SemanticSchemaManager("agents/schema_loader/config/semantic_schemas")
-        current_schema = semantic_manager.load_schema("product_sales_semantic.json")
+        # Semantic schema will be loaded dynamically when needed
+        def load_semantic_schema_ui():
+            """Load semantic schema dynamically"""
+            try:
+                from agents.schema_loader.semantic_schema import SemanticSchemaManager
+                _, table_name = get_current_db_info()
+                semantic_manager = SemanticSchemaManager("agents/schema_loader/config/semantic_schemas")
+                semantic_file = f"{table_name}_semantic.json"
+                return semantic_manager.load_schema(semantic_file)
+            except Exception as e:
+                logger.warning(f"Could not load semantic schema: {e}")
+                return None
+        
+        current_schema = load_semantic_schema_ui()
         
         if current_schema:
             # Create editable interface for each table
@@ -901,7 +692,7 @@ with gr.Blocks(
                             unit_input = gr.Textbox(
                                 label="Unit (Optional)",
                                 value=col.unit or "",
-                                placeholder="e.g., USD, percentage, count, etc."
+                                placeholder="e.g., currency, percentage, count, etc."
                             )
                             
                             calculation_note_input = gr.Textbox(
@@ -947,7 +738,11 @@ with gr.Blocks(
                             input_index += 4
                     
                     # Save the updated schema
-                    semantic_manager.save_schema(current_schema, "product_sales_semantic.json")
+                    from agents.schema_loader.semantic_schema import SemanticSchemaManager
+                    _, table_name = get_current_db_info()
+                    semantic_manager = SemanticSchemaManager("agents/schema_loader/config/semantic_schemas")
+                    semantic_file = f"{table_name}_semantic.json"
+                    semantic_manager.save_schema(current_schema, semantic_file)
                     
                     return "✅ Semantic schema saved successfully! The AI will now use your enhanced descriptions."
                     
@@ -1027,7 +822,7 @@ with gr.Blocks(
 if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",
-        server_port=7861,  # Use different port to avoid conflict
+        server_port=7862,  # Use different port to avoid conflict
         share=False,
         show_error=True
     )

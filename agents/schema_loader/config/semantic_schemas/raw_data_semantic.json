@@ -1,0 +1,286 @@
+{
+  "database_name": "raw_data",
+  "description": "Database schema for raw_data",
+  "tables": [
+    {
+      "name": "raw_data",
+      "description": "Table: raw_data",
+      "primary_key": "id",
+      "columns": [
+        {
+          "name": "CUSTOMER_NAME",
+          "description": "Name of the customer entity",
+          "business_meaning": "Customer identifier for sales and revenue tracking",
+          "data_type": "TEXT",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "LEVEL_1_NAME",
+          "description": "Column: LEVEL_1_NAME",
+          "business_meaning": "Data field for LEVEL 1 NAME",
+          "data_type": "TEXT",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "CONTRACT_DURATION",
+          "description": "Column: CONTRACT_DURATION",
+          "business_meaning": "Data field for CONTRACT DURATION",
+          "data_type": "INTEGER",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "YEAR",
+          "description": "Column: YEAR",
+          "business_meaning": "Data field for YEAR",
+          "data_type": "INTEGER",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "FISCAL_QUARTER_ID",
+          "description": "Column: FISCAL_QUARTER_ID",
+          "business_meaning": "Data field for FISCAL QUARTER ID",
+          "data_type": "INTEGER",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "QUARTER",
+          "description": "Column: QUARTER",
+          "business_meaning": "Data field for QUARTER",
+          "data_type": "TEXT",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "QUARTER_NAME",
+          "description": "Column: QUARTER_NAME",
+          "business_meaning": "Data field for QUARTER NAME",
+          "data_type": "TEXT",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "SHORT_QUARTER_NAME",
+          "description": "Column: SHORT_QUARTER_NAME",
+          "business_meaning": "Data field for SHORT QUARTER NAME",
+          "data_type": "TEXT",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "SCMS_NAME",
+          "description": "Column: SCMS_NAME",
+          "business_meaning": "Data field for SCMS NAME",
+          "data_type": "TEXT",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "TOP_VERTICAL_MARKET_NAME",
+          "description": "Column: TOP_VERTICAL_MARKET_NAME",
+          "business_meaning": "Data field for TOP VERTICAL MARKET NAME",
+          "data_type": "TEXT",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "DETAIL_VERTICAL_MARKET_NAME",
+          "description": "Column: DETAIL_VERTICAL_MARKET_NAME",
+          "business_meaning": "Data field for DETAIL VERTICAL MARKET NAME",
+          "data_type": "TEXT",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "COUNTRY",
+          "description": "Column: COUNTRY",
+          "business_meaning": "Data field for COUNTRY",
+          "data_type": "TEXT",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "IntersightLicenseTier",
+          "description": "Column: IntersightLicenseTier",
+          "business_meaning": "Data field for IntersightLicenseTier",
+          "data_type": "TEXT",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "IntersightConsumption",
+          "description": "Service consumption type for Intersight products",
+          "business_meaning": "Categorizes the type of service consumption model",
+          "data_type": "TEXT",
+          "sample_values": [
+            "SaaS",
+            "vApp",
+            "pApp",
+            "Misc"
+          ],
+          "unit": "categorical",
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "IntersightProduct",
+          "description": "Column: IntersightProduct",
+          "business_meaning": "Data field for IntersightProduct",
+          "data_type": "TEXT",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "IntersightEnterpriseAgreement",
+          "description": "Column: IntersightEnterpriseAgreement",
+          "business_meaning": "Data field for IntersightEnterpriseAgreement",
+          "data_type": "TEXT",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "QUANTITY",
+          "description": "Column: QUANTITY",
+          "business_meaning": "Data field for QUANTITY",
+          "data_type": "INTEGER",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "LIST_PRICE",
+          "description": "Column: LIST_PRICE",
+          "business_meaning": "Data field for LIST PRICE",
+          "data_type": "REAL",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "ACTUAL_BOOKINGS",
+          "description": "Actual revenue booked for this transaction",
+          "business_meaning": "Financial booking amount for revenue recognition",
+          "data_type": "REAL",
+          "sample_values": null,
+          "unit": "USD",
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "BASE_PRICE",
+          "description": "Column: BASE_PRICE",
+          "business_meaning": "Data field for BASE PRICE",
+          "data_type": "REAL",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "ANNUALIZED_MONTHLY_RECURRING_REVENUE",
+          "description": "Column: ANNUALIZED_MONTHLY_RECURRING_REVENUE",
+          "business_meaning": "Data field for ANNUALIZED MONTHLY RECURRING REVENUE",
+          "data_type": "REAL",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "TRANSACTIONAL_MONTHLY_RECURRING_REVENUE",
+          "description": "Column: TRANSACTIONAL_MONTHLY_RECURRING_REVENUE",
+          "business_meaning": "Data field for TRANSACTIONAL MONTHLY RECURRING REVENUE",
+          "data_type": "REAL",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "QuantityAdj",
+          "description": "Column: QuantityAdj",
+          "business_meaning": "Data field for QuantityAdj",
+          "data_type": "INTEGER",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        },
+        {
+          "name": "QTY_IN_SUBS_MONTHS",
+          "description": "Column: QTY_IN_SUBS_MONTHS",
+          "business_meaning": "Data field for QTY IN SUBS MONTHS",
+          "data_type": "INTEGER",
+          "sample_values": null,
+          "unit": null,
+          "constraints": null,
+          "related_columns": null,
+          "calculation_note": null
+        }
+      ],
+      "business_purpose": "Data storage for raw_data related information",
+      "common_queries": null
+    }
+  ],
+  "relationships": null,
+  "business_glossary": null
+}
