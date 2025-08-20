@@ -7,6 +7,8 @@ import os, re, json
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 from agents.visualization.agent import VisualizationAgent, VisualizationOptions
+from agents.base import Agent
+from services.llm_service import LLMService
 
 class ExecutionPlan:
     """Tracks current SQL, retries, errors, and optional visualization options."""
@@ -25,7 +27,7 @@ class ExecutionPlan:
         # Bail on non-retryable conditions if executor marks them
         return any(getattr(e, "error_type", "") in ("permission", "auth", "timeout_hard") for e in self.errors)
 
-class ReasoningAgent:
+class ReasoningAgent(Agent):
     """
     Execute → observe → repair → re-execute (MAGIC-style).
     - Bounded retries with a cheap probe (LIMIT 1) for SELECTs
@@ -41,12 +43,15 @@ class ReasoningAgent:
         self.viz_agent = VisualizationAgent()
         self.current_plan: Optional[ExecutionPlan] = None
 
+    def run(self, payload: str, context: str):
+        return self.execute_query(payload, context)
+
     # ===== Public entry point =====
     def execute_query(
         self,
         sql: str,
-        schema_context: str,
-        viz_options: Optional[Dict[str, Any]] = None
+        schema_context: str = "",
+        viz_options: Optional[Dict[str, Any]] = None,
     ):
         """
         Run SQL with guided retries using schema-aware fixes.
@@ -158,8 +163,6 @@ class ReasoningAgent:
         Returns ONE corrected SQLite query string or None.
         """
         try:
-            from openai import OpenAI
-            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
             from utils.token_tracker import record_openai_usage_from_response
         except Exception:
             return None
@@ -171,11 +174,11 @@ class ReasoningAgent:
         user = {"role": "user", "content": self._prompt_for(err_type, schema_context, sql, error_msg)}
 
         try:
-            r = client.chat.completions.create(
+            r = LLMService.invoke(
                 model="gpt-3.5-turbo",
                 messages=[system, user],
                 temperature=0.0,
-                max_tokens=400
+                max_tokens=400,
             )
             # Record token usage
             record_openai_usage_from_response(r)

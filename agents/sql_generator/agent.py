@@ -6,12 +6,14 @@ into executable SQL queries using OpenAI GPT-3.5-turbo with schema-aware
 context for accurate and optimized SQL generation.
 """
 
-from openai import OpenAI
-from pydantic import BaseModel
 import json
 from typing import Optional, Dict, Any, List
 import logging
 import re
+
+from agents.base import Agent
+from services.llm_service import LLMService
+from pydantic import BaseModel
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -28,7 +30,7 @@ import os
 
 load_dotenv()
 
-class SQLGeneratorAgent:
+class SQLGeneratorAgent(Agent):
     """
     Converts structured intents into executable SQL queries.
     
@@ -49,10 +51,7 @@ class SQLGeneratorAgent:
         Args:
             api_key: OpenAI API key (uses environment variable if not provided)
         """
-        self.client = OpenAI(
-            api_key=api_key or os.getenv("OPENAI_API_KEY")  # Checks both sources
-        )
-        if not self.client.api_key:
+        if not (api_key or os.getenv("OPENAI_API_KEY")):
             raise ValueError("OpenAI API key not found in .env or arguments")
 
         self.model = "gpt-3.5-turbo"
@@ -209,11 +208,11 @@ class SQLGeneratorAgent:
         # Try up to 2 attempts with slightly different pressure
         for attempt in range(2):
             try:
-                resp = self.client.chat.completions.create(
+                resp = LLMService.invoke(
                     model=self.model,
                     messages=[system_msg, {"role": "user", "content": user_prompt}],
                     temperature=0.0 if attempt == 0 else 0.1,
-                    max_tokens=400
+                    max_tokens=400,
                 )
                 # Record token usage
                 record_openai_usage_from_response(resp)
@@ -226,6 +225,9 @@ class SQLGeneratorAgent:
 
         # If still failing, throw to outer handler so fallback kicks in
         raise ValueError("Unable to parse LLM JSON for SQL generation")
+
+    def run(self, payload: dict, context: dict) -> SQLQuery:
+        return self.generate_sql(payload, context)
 
     def _create_schema_context(self, schema_info: dict) -> str:
         """

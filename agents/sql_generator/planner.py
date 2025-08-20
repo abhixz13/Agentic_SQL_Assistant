@@ -11,7 +11,9 @@ import os
 import re
 import logging
 from typing import Any, Dict, List, Optional, Tuple
-from openai import OpenAI
+
+from agents.base import Agent
+from services.llm_service import LLMService
 from pydantic import BaseModel
 from .schemas import SQLPlan, PlanningRequest
 
@@ -66,7 +68,7 @@ SQLITE_FUNCTION_CATALOG: List[Dict[str, str]] = [
 # SQL Planner Agent
 # ------------------------------
 
-class SQLPlannerAgent:
+class SQLPlannerAgent(Agent):
     """
     Converts structured intents and schema into SQL planning DSL.
     
@@ -88,10 +90,9 @@ class SQLPlannerAgent:
         Args:
             api_key: OpenAI API key (uses environment variable if not provided)
         """
-        self.client = OpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
-        if not self.client.api_key:
+        if not (api_key or os.getenv("OPENAI_API_KEY")):
             raise ValueError("OpenAI API key not found in .env or arguments")
-        
+
         self.model = "gpt-4o-mini"  # Cost-effective for planning
         self.function_catalog = SQLITE_FUNCTION_CATALOG
         self.rules = [
@@ -161,7 +162,7 @@ class SQLPlannerAgent:
         user_prompt = self._create_user_prompt(request.intent, schema_context)
         
         try:
-            response = self.client.chat.completions.create(
+            response = LLMService.invoke(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -169,7 +170,7 @@ class SQLPlannerAgent:
                 ],
                 temperature=0.1,
                 max_tokens=1200,
-                response_format={"type": "json_object"}
+                response_format={"type": "json_object"},
             )
             
             # Record token usage
@@ -387,5 +388,8 @@ Return only the JSON plan following the specified schema.
         
         context_parts.append(f"Confidence: {plan.confidence}")
         context_parts.append("=== END PLAN ===")
-        
+
         return "\n".join(context_parts)
+
+    def run(self, payload: Dict[str, Any], context: Dict[str, Any]) -> SQLPlan:
+        return self.create_plan(payload, context)
