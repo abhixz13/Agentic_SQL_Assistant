@@ -224,6 +224,148 @@ def get_current_db_info():
     
     return current_db_path, current_table_name
 
+def cleanup_system_data():
+    """Clean up all system data including logs, cache, few-shot examples, semantic schemas, SQLite DB, and CSV files"""
+    import glob
+    import shutil
+    
+    try:
+        cleanup_report = []
+        
+        # 1. Delete all log files
+        log_files = glob.glob("*.log") + glob.glob("**/*.log", recursive=True)
+        for log_file in log_files:
+            try:
+                os.remove(log_file)
+                cleanup_report.append(f"✅ Deleted log file: {log_file}")
+            except Exception as e:
+                cleanup_report.append(f"⚠️ Could not delete log file {log_file}: {str(e)}")
+        
+        # 2. Delete cache data (if any)
+        cache_dirs = ["__pycache__", ".cache", "cache"]
+        for cache_dir in cache_dirs:
+            if os.path.exists(cache_dir):
+                try:
+                    shutil.rmtree(cache_dir)
+                    cleanup_report.append(f"✅ Deleted cache directory: {cache_dir}")
+                except Exception as e:
+                    cleanup_report.append(f"⚠️ Could not delete cache directory {cache_dir}: {str(e)}")
+        
+        # Recursively delete __pycache__ directories
+        pycache_dirs = glob.glob("**/__pycache__", recursive=True)
+        for pycache_dir in pycache_dirs:
+            try:
+                shutil.rmtree(pycache_dir)
+                cleanup_report.append(f"✅ Deleted cache directory: {pycache_dir}")
+            except Exception as e:
+                cleanup_report.append(f"⚠️ Could not delete cache directory {pycache_dir}: {str(e)}")
+        
+        # 3. Delete few-shot examples
+        few_shot_dir = "data/few_shot_examples"
+        if os.path.exists(few_shot_dir):
+            try:
+                shutil.rmtree(few_shot_dir)
+                cleanup_report.append(f"✅ Deleted few-shot examples directory: {few_shot_dir}")
+            except Exception as e:
+                cleanup_report.append(f"⚠️ Could not delete few-shot examples: {str(e)}")
+        
+        # 4. Delete semantic schema data
+        semantic_schema_dir = "agents/schema_loader/config/semantic_schemas"
+        if os.path.exists(semantic_schema_dir):
+            try:
+                shutil.rmtree(semantic_schema_dir)
+                cleanup_report.append(f"✅ Deleted semantic schema directory: {semantic_schema_dir}")
+            except Exception as e:
+                cleanup_report.append(f"⚠️ Could not delete semantic schemas: {str(e)}")
+        
+        # 5. Delete SQLite databases and CSV files in data directory
+        data_files = glob.glob("data/*.db") + glob.glob("data/*.sqlite") + glob.glob("data/*.csv")
+        for data_file in data_files:
+            try:
+                os.remove(data_file)
+                cleanup_report.append(f"✅ Deleted data file: {data_file}")
+            except Exception as e:
+                cleanup_report.append(f"⚠️ Could not delete data file {data_file}: {str(e)}")
+        
+        # 6. Create fresh directories that are needed
+        os.makedirs(few_shot_dir, exist_ok=True)
+        os.makedirs(semantic_schema_dir, exist_ok=True)
+        cleanup_report.append(f"✅ Recreated necessary directories")
+        
+        return True, "\n".join(cleanup_report)
+        
+    except Exception as e:
+        return False, f"❌ Error during cleanup: {str(e)}"
+
+def handle_new_database_upload(csv_file, db_name):
+    """Handle the upload of a new database CSV file and set up the system"""
+    try:
+        if not csv_file or not db_name:
+            return False, "❌ Please provide both a CSV file and database name", None, None
+        
+        # First, clean up existing data
+        cleanup_success, cleanup_report = cleanup_system_data()
+        if not cleanup_success:
+            return False, f"❌ Cleanup failed: {cleanup_report}", None, None
+        
+        # Validate database name (alphanumeric and underscores only)
+        db_name = re.sub(r'[^a-zA-Z0-9_]', '_', db_name.strip())
+        if not db_name:
+            db_name = "uploaded_database"
+        
+        # Save the uploaded CSV file
+        csv_filename = f"{db_name}.csv"
+        csv_path = f"data/{csv_filename}"
+        
+        # Copy the uploaded file to data directory
+        import shutil
+        shutil.copy2(csv_file.name, csv_path)
+        
+        # Create SQLite database from CSV
+        db_filename = f"{db_name}.db"
+        db_path = f"data/{db_filename}"
+        
+        # Read CSV and create database
+        df = pd.read_csv(csv_path)
+        
+        with sqlite3.connect(db_path) as conn:
+            # Use database name as table name
+            table_name = db_name
+            df.to_sql(table_name, conn, index=False, if_exists='replace')
+        
+        # Update the system configuration to use the new database
+        global current_db_path, current_table_name
+        current_db_path = db_path
+        current_table_name = table_name
+        
+        success_report = f"""
+## ✅ New Database Successfully Uploaded!
+
+### 📊 Database Details:
+- **Database Name:** {db_name}
+- **Table Name:** {table_name}
+- **CSV File:** {csv_filename}
+- **SQLite File:** {db_filename}
+- **Records:** {len(df)} rows
+- **Columns:** {len(df.columns)} columns
+
+### 🧹 Cleanup Report:
+{cleanup_report}
+
+### 📋 Column Schema:
+{', '.join(df.columns.tolist())}
+
+### 🎯 Next Steps:
+1. The system has been reset with your new database
+2. You can now ask questions about your data
+3. Consider setting up semantic schema for better AI understanding
+"""
+        
+        return True, success_report, df.head(10), csv_path
+        
+    except Exception as e:
+        return False, f"❌ Error processing database upload: {str(e)}", None, None
+
 def get_db_schema():
     """Get detailed database schema in format expected by IntentParserAgent"""
     try:
